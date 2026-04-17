@@ -1,0 +1,24 @@
+{
+  "name": "mommy-ban-tra-sua",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "test": "jest tests/order.spec.js",
+    "test:ai": "jest tests/ai.spec.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "csvtojson": "^2.0.14",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "node-telegram-bot-api": "^0.67.0",
+    "openai": "^6.34.0"
+  },
+  "devDependencies": {
+    "jest": "^30.3.0"
+  }
+}
