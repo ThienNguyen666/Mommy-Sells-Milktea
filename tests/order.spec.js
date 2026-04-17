@@ -116,9 +116,7 @@ describe("Order Bot", () => {
     parseOrder.mockResolvedValue({
       items: generatedItems
     });
-    console.log("Generated items",generatedItems);
     const res = await handleMessage(chatId, "order tất cả");
-    console.log("Response:",res);
 
     let expectedTotal = 0;
 
