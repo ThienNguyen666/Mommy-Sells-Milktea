@@ -2,28 +2,28 @@
 
 > An intelligent AI-powered chatbot system for automating milk tea shop orders on Telegram
 
-## 📋 Project Overview
+## Project Overview
 
-This project implements an **AI-powered chatbot** that operates as a virtual shop assistant for a milk tea (trà sữa) shop. The bot communicates with customers on Telegram, helps them place orders, calculates prices, and facilitates payment through VietQR and PayOS integration.
+This project implements an AI-powered chatbot that operates as a virtual shop assistant for a milk tea (trà sữa) shop. The bot communicates with customers on Telegram, helps them place orders, calculates prices, and facilitates payment through VietQR and PayOS integration.
 
-### ✨ Key Features
+### Key Features
 
-- **🤖 AI-Powered Conversation**: Uses OpenAI (GPT-4 mini) to understand customer messages and generate natural responses
-- **💬 Telegram Integration**: Full Telegram bot support with polling-based message handling
-- **📋 Smart Order Management**: 
+- **AI-Powered Conversation**: Uses OpenAI (GPT-4 mini) to understand customer messages and generate natural responses
+- **Telegram Integration**: Full Telegram bot support with polling-based message handling
+- **Smart Order Management**: 
   - Parse customer orders from natural language
   - Ask for missing information (size preferences)
   - Confirm order details before payment
   - Calculate totals automatically
-- **💳 Payment Integration**: 
+- **Payment Integration**: 
   - VietQR QR code generation for bank transfers
   - PayOS integration for payment verification (optional)
   - Order confirmation on payment completion
-- **🗂️ Menu Management**: CSV-based menu with categories, prices, and availability
-- **📊 Order Tracking**: In-memory state management for customer conversations
-- **🧪 Comprehensive Testing**: Unit tests for order flow and AI integration
+- **Menu Management**: CSV-based menu with categories, prices, and availability
+- **Order Tracking**: In-memory state management for customer conversations
+- **Comprehensive Testing**: Unit tests for order flow and AI integration
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 src/
@@ -45,6 +45,10 @@ src/
 │   └── save_orders.util.js        # Order persistence
 ├── prompt/
 │   └── persona.txt                # AI personality definition
+├── public/
+│   └── script.js           
+│   └── index.html          
+│   └── style.css
 └── Menu.csv                       # Menu database
 ```
 
@@ -85,7 +89,7 @@ BOT_TOKEN=your_telegram_bot_token
 OPENAI_API_KEY=your_openai_api_key
 
 # Bank Account (for VietQR)
-ACCOUNT=0908866402
+ACCOUNT=0999999999
 
 # PayOS Integration (Optional)
 PAYOS_CLIENT_ID=your_payos_client_id
@@ -99,7 +103,7 @@ PAYOS_CANCEL_URL=https://your-domain.com/payos/cancel
 PORT=4300
 ```
 
-## 📖 Usage
+## Usage
 
 ### Run Telegram Bot
 ```bash
@@ -169,7 +173,7 @@ Categories include:
 - **Đá Xay** - Shaved Ice
 - **Topping** - Additional toppings
 
-## 🤖 AI Integration
+## AI Integration
 
 ### Order Parsing (ai.service.js)
 - Uses OpenAI GPT-4 mini model
@@ -186,7 +190,7 @@ Categories include:
 ### Persona
 The bot acts as a friendly mother selling milk tea, with natural Vietnamese communication style.
 
-## 💳 Payment System
+## Payment System
 
 ### VietQR Integration
 - Generates QR codes for bank transfers
@@ -200,23 +204,23 @@ The bot acts as a friendly mother selling milk tea, with natural Vietnamese comm
 - Marks orders as paid in system
 - Fallback to VietQR if PayOS unavailable
 
-## 🧪 Testing
+## Testing
 
 The project includes comprehensive tests:
 
 ### Order Flow Tests (`tests/order.spec.js`)
-- ✅ Basic order flow
-- ✅ Size handling (missing, partial, all)
-- ✅ Multiple items
-- ✅ Price calculations
-- ✅ State transitions
+- Basic order flow
+- Size handling (missing, partial, all)
+- Multiple items
+- Price calculations
+- State transitions
 
 ### AI Tests (`tests/ai.spec.js`)
-- ✅ Order parsing
-- ✅ Handling typos
-- ✅ Menu validation
+- Order parsing
+- Handling typos
+- Menu validation
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Bot not responding to Telegram messages
 - Check `BOT_TOKEN` is correct
@@ -225,7 +229,7 @@ The project includes comprehensive tests:
 
 ### OpenAI API errors
 - Verify `OPENAI_API_KEY` is valid
-- Check API key has credits
+- Check API key has credit
 - Monitor API usage
 
 ### Menu loading issues
@@ -236,19 +240,7 @@ The project includes comprehensive tests:
 - Check `ACCOUNT` environment variable is set
 - Verify image URL is accessible
 
-## 📦 Dependencies
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| express | 5.2.1 | Web server & webhooks |
-| dotenv | 17.4.2 | Environment variables |
-| openai | 6.34.0 | AI/LLM integration |
-| node-telegram-bot-api | 0.67.0 | Telegram bot |
-| csvtojson | 2.0.14 | Menu CSV parsing |
-| @payos/node | 0.3.5 | PayOS integration (optional) |
-| jest | 30.3.0 | Testing framework |
-
-## 📝 Project Structure Notes
+## Project Structure Notes
 
 ### State Management
 - Currently uses in-memory `userState` map
@@ -265,18 +257,18 @@ The project includes comprehensive tests:
 - Try-catch on all async operations
 - Input validation (length, format)
 
-## 🎯 Alignment with Company Requirements
+## Alignment with Company Requirements
 
-✅ **Uses Large Language Models**: OpenAI GPT-4 mini  
-✅ **Customer Communication**: Full Telegram bot integration  
-✅ **Order Support**: Natural language parsing & confirmation  
-✅ **Price Calculation**: Automatic total computation  
-✅ **Payment Integration**: VietQR + PayOS support  
-✅ **Order Summary**: Formatted output for preparation & delivery  
-✅ **Understandable Code**: Well-documented with clear structure  
-✅ **Production Ready**: Error handling, testing, logging  
+ **Uses Large Language Models**: OpenAI GPT-4 mini  
+ **Customer Communication**: Full Telegram bot integration  
+ **Order Support**: Natural language parsing & confirmation  
+ **Price Calculation**: Automatic total computation  
+ **Payment Integration**: VietQR + PayOS support  
+ **Order Summary**: Formatted output for preparation & delivery  
+ **Understandable Code**: Well-documented with clear structure  
+ **Production Ready**: Error handling, testing, logging  
 
-## 🚀 Deployment
+## Deployment
 
 ### Local Testing
 ```bash
@@ -315,18 +307,12 @@ npm start
      mommy-bot
    ```
 
-## 📄 Documentation
-
-- **Solution Analysis**: See `SOLUTION.md` for technical deep-dive
-- **API Documentation**: See `API.md` for webhook details
-- **Testing Guide**: See test files for examples
-
-## 👥 Author
+## Author
 
 - Developed for CASSO COMPANY LIMITED Entry Test
 - Entry Test: Milk Tea Shop AI Chatbot System
 
-## 📞 Support
+## Support
 
 For issues or questions:
 1. Check `.env` configuration
