@@ -1,225 +1,212 @@
 const { parseOrder } = require('./ai.service');
 const { getMenu } = require('./menu.service');
 const { generateReply } = require('./chat.service');
+const { saveOrder, getOrder, clearOrder } = require('./order.store');
 
-let userState = {};
-const account = process.env.ACCOUNT || "0999999999";
+const account = process.env.ACCOUNT || '0999999999';
 
+// ========================
+// HELPERS
+// ========================
 function calculateTotal(items, menu) {
   let total = 0;
-
-  for (let item of items) {
+  for (const item of items) {
     const found = menu.find(m => m.name === item.name);
-
     if (!found) continue;
-
     const price = item.size === 'L' ? found.priceL : found.priceM;
     total += price * item.quantity;
   }
-
   return total;
+}
+
+/**
+ * Gộp các món cùng tên và cùng size lại thành một dòng duy nhất
+ */
+function groupItems(items) {
+  const grouped = {};
+  items.forEach(item => {
+    const key = `${item.name}-${item.size}`;
+    if (grouped[key]) {
+      grouped[key].quantity += item.quantity;
+    } else {
+      grouped[key] = { ...item };
+    }
+  });
+  return Object.values(grouped);
 }
 
 function formatItems(items) {
   return items
-    .map(i => `- ${i.name} (${i.size}) x${i.quantity}`)
+    .map(i => `- ${i.name} (${i.size || 'chưa chọn size'}) x${i.quantity}`)
     .join('\n');
 }
 
 function detectSize(text) {
-  if (text.match(/\b(l|size l|lớn)\b/)) return 'L';
-  if (text.match(/\b(m|size m|nhỏ)\b/)) return 'M';
+  if (text.match(/\b(l|size\s*l|lớn)\b/i)) return 'L';
+  if (text.match(/\b(m|size\s*m|nhỏ)\b/i)) return 'M';
   return null;
 }
 
 function buildSizeQuestion(items) {
   return items
     .filter(i => !i.size)
-    .map(i => `- ${i.name}: size M hay L nè con?`)
+    .map(i => `- ${i.name}: con lấy size M hay L nè?`)
     .join('\n');
 }
 
-async function handleMessage(chatId, text) {
-  if(text.length > 1000){
-    return await generateReply("Con nhắn dài quá, hãy gửi lại nhe");
+function generateVietQR(total, orderId) {
+  return `https://img.vietqr.io/image/MB-${account}-compact.png?amount=${total}&addInfo=DH${orderId}`;
+}
+
+async function buildPaymentMessage(items, total, orderId) {
+  let paymentUrl = "";
+  try {
+    const { createPayOSPayment, buildPayOSItems } = require('./payos.service');
+    const menu = await getMenu();
+    const payosItems = buildPayOSItems(items, menu);
+
+    const payment = await createPayOSPayment({
+      orderCode: orderId,
+      amount: total,
+      items: payosItems,
+      description: `DH${orderId}`,
+    });
+
+    paymentUrl = payment?.checkoutUrl || payment?.paymentUrl;
+  } catch (err) {
+    console.log('PayOS không khả dụng, dùng VietQR làm dự phòng:', err.message);
   }
+
+  const qr = generateVietQR(total, orderId);
+  
+  const baseMsg = `Mommy làm đơn này nha con yêu 💖\n${formatItems(items)}\n💰 Tổng: ${total.toLocaleString('vi-VN')}đ\n\nNội dung CK: DH${orderId}\n\nCon quét mã này để thanh toán nha 😘\n${qr}`;
+  
+  const linkMsg = paymentUrl ? `\n\nHoặc bấm vào link này cho nhanh nè: ${paymentUrl}` : "";
+  const instruction = `\n\nChuyển khoản xong con nhớ nhắn **"đã chuyển"** để mommy kiểm tra và làm máy ngay cho con nha! ✨`;
+
+  return baseMsg + linkMsg + instruction;
+}
+
+// ========================
+// MAIN HANDLER
+// ========================
+async function handleMessage(chatId, text) {
+  if (text.length > 1000) return await generateReply('Con nhắn dài quá, hãy gửi lại nhe');
 
   const menu = await getMenu();
-  text = text.toLowerCase();
+  const lowerText = text.toLowerCase().trim();
+  const currentOrder = getOrder(chatId);
 
-  // ======================
-  // 🛑 ANTI-SPAM / NO STATE
-  // ======================
-  if (text === "ok" && !userState[chatId]) {
-    return await generateReply("Con đặt món trước nha 😆");
+  // 1. LỆNH ĐIỀU HƯỚNG (RESET/ĐỔI MÓN)
+  const resetKeywords = ['đổi món', 'thay đơn', 'đặt món mới', 'reset', 'đổi đơn', 'hủy đơn'];
+  if (resetKeywords.some(kw => lowerText.includes(kw))) {
+    clearOrder(chatId);
+    return await generateReply('Mommy đã xóa đơn cũ rồi, con nhắn món mới muốn đặt cho mommy nha! 🥰');
   }
 
-  // ======================
-  // 💳 PAYMENT REQUEST
-  // ======================
-  if (text.includes("thanh toán") || text.includes("chuyển khoản")) {
-    const state = userState[chatId];
-
-    if (!state || state.status !== "confirmed") {
-      return await generateReply("Con đặt đơn trước rồi mommy gửi thông tin thanh toán nha 😘");
+  // 2. CHỐT HẠ SAU THANH TOÁN
+  if (currentOrder?.status === 'confirmed') {
+    const doneKeywords = ['đã chuyển', 'xong rồi', 'thanh toán rồi', 'ck rồi', 'done', 'rồi mom'];
+    if (doneKeywords.some(kw => lowerText.includes(kw))) {
+      clearOrder(chatId); // Reset đơn để khách có thể đặt lượt tiếp theo
+      return await generateReply('Mommy đã nhận được thông báo! Đợi mẹ check app xíu rồi mẹ làm máy giao con ngay nhe. Cảm ơn con yêu! ❤️');
     }
-
-    const orderId = Date.now();
-
-    const qr = `https://img.vietqr.io/image/MB-${account}-compact.png?amount=${state.total}&addInfo=DH${orderId}`;
-
-    const rawReply = `Đây là thông tin thanh toán nè con 💖
-${formatItems(state.items)}
-Tổng: ${state.total}đ
-
-Nội dung CK: DH${orderId}
-
-${qr}`;
-
-    return await generateReply(rawReply);
   }
 
-  // ======================
-  // 🔁 HANDLE CHANGE ORDER
-  // ======================
-  if (text.includes("đổi") || text.includes("thay")) {
-    return await generateReply("Con sửa lại đơn rồi gửi lại giúp mommy nha 🥺");
+  // 3. ANTI-SPAM / KIỂM TRA ĐƠN TRỐNG
+  if ((lowerText === 'ok' || lowerText === 'xác nhận') && !currentOrder) {
+    return await generateReply('Con chưa đặt món mà, xem menu rồi nhắn mommy làm cho nha 😆');
   }
 
-  // ======================
-  // 🟢 STEP 1: NEW ORDER
-  // ======================
-  if (!userState[chatId]) {
-    const parsed = await parseOrder(text, menu);
-
-    if (!parsed || !parsed.items?.length) {
-      return await generateReply(`
-        Mommy chưa hiểu rõ 😭
-
-        Con ghi kiểu này giúp mommy nha:
-        "2 trà sữa trân châu đen size L"
-      `);
+  // 4. THANH TOÁN (Nếu khách muốn lấy lại thông tin CK)
+  if (lowerText.includes('thanh toán') || lowerText.includes('chuyển khoản')) {
+    if (!currentOrder || (currentOrder.status !== 'confirmed' && currentOrder.status !== 'pending')) {
+      return await generateReply('Con đặt đơn trước rồi mommy gửi thông tin thanh toán nha 😘');
     }
+    const orderId = currentOrder.orderCode || Date.now();
+    const msg = await buildPaymentMessage(currentOrder.items, currentOrder.total, orderId);
+    return await generateReply(msg);
+  }
 
-    let items = parsed.items.map(i => ({
-      ...i,
-      size: i.size || null
+  // 5. CHỌN SIZE (Trạng thái ask_size_detail)
+  const isSizeInput = detectSize(lowerText);
+  if (currentOrder?.status === 'ask_size_detail' && isSizeInput) {
+    const size = isSizeInput;
+    // Điền size vào những món còn thiếu và giữ nguyên số lượng
+    let items = currentOrder.items.map(i => ({ 
+      ...i, 
+      size: i.size || size 
     }));
 
-    const needSize = items.some(i => !i.size);
-
-    // 🔥 hỏi size từng món
-    if (needSize) {
-      userState[chatId] = {
-        status: "ask_size_detail",
-        items
-      };
-
-      const question = buildSizeQuestion(items);
-
-      return await generateReply(`Mẹ hỏi lại chút nha 🥺\n${question}`);
-    }
-
     const total = calculateTotal(items, menu);
+    saveOrder(chatId, { status: 'pending', items, total });
 
-    userState[chatId] = {
-      status: "pending",
-      items,
-      total
-    };
-
-    const rawReply = `Mẹ ghi nhận:
-${formatItems(items)}
-Tổng: ${total}đ
-
-Con xác nhận ok nha ❤️`;
-
-    return await generateReply(rawReply);
+    const reply = `Mommy cập nhật size rồi nè:\n${formatItems(items)}\nTổng: ${total.toLocaleString('vi-VN')}đ\n\nCon xác nhận ok nha! ❤️`;
+    return await generateReply(reply);
   }
 
-  // ======================
-  // 🟣 STEP 2: ASK SIZE DETAIL
-  // ======================
-  if (userState[chatId].status === "ask_size_detail") {
-    const size = detectSize(text);
+  // 6. XÁC NHẬN ĐƠN (Pending -> Confirmed)
+  if (currentOrder?.status === 'pending' && (lowerText.includes('ok') || lowerText.includes('xác nhận') || lowerText === 'có' || lowerText === 'đúng rồi')) {
+    const orderId = Date.now();
+    saveOrder(chatId, { ...currentOrder, status: 'confirmed', orderCode: orderId });
+    const msg = await buildPaymentMessage(currentOrder.items, currentOrder.total, orderId);
+    return await generateReply(msg);
+  }
 
-    if (!size) {
-      return await generateReply("Con nói rõ size M hay L giúp mommy nha 🥺");
-    }    
+  // 7. GỌI AI ĐỂ XỬ LÝ ĐƠN HÀNG
+  // 7.1. Chặn các câu chào hỏi/đặt vấn đề mà chưa có món cụ thể
+  const greetingKeywords = ['đặt đơn mới', 'muốn đặt', 'muốn mua', 'order', 'menu', 'mua trà sữa', 'đặt món'];
+  if (greetingKeywords.some(kw => lowerText.includes(kw)) && lowerText.length < 30) {
+    if (!currentOrder) {
+      return await generateReply('Mommy sẵn sàng rồi nè! Con muốn uống gì nhắn tên món kèm số lượng để mommy làm cho nhe 😘');
+    }
+  }
 
-    let items = userState[chatId].items;
+  const parsed = await parseOrder(lowerText, menu, currentOrder?.items || []);
+  const items = parsed.items || [];
+  const unknown = parsed.unknownItems || [];
 
-    // nếu user nói "L hết"
-    if (text.includes("hết") || text.includes("tất cả")) {
-      items = items.map(i => ({ ...i, size }));
+  // 7.2. Trường hợp AI không bóc tách được gì (câu nói linh tinh)
+  if (items.length === 0 && unknown.length === 0) {
+    if (!currentOrder) return await generateReply(`Mommy đây! Con xem menu rồi nhắn tên món muốn uống cho mommy nhe! 💖`);
+    if (currentOrder.status === 'confirmed') return await generateReply('Con đã chốt đơn rồi nè. Nhắn "đã chuyển" nếu đã CK xong, hoặc "đổi món" để đặt lại nha!');
+    return; // Tránh phản hồi khi đang dở dang
+  }
+
+  // 7.3. Trường hợp chỉ có món lạ (unknownItems)
+  if (items.length === 0 && unknown.length > 0) {
+    // Lọc bỏ những từ cảm thán hoặc từ khóa hệ thống mà AI bắt nhầm vào unknownItems
+    const filteredUnknown = unknown.filter(u => 
+      u.length > 3 && 
+      !greetingKeywords.some(kw => u.toLowerCase().includes(kw)) &&
+      !['nhe mom', 'nhe mẹ', 'nha mommy'].some(kw => u.toLowerCase().includes(kw))
+    );
+
+    if (filteredUnknown.length > 0) {
+      return await generateReply(`Món "${filteredUnknown.join(', ')}" mommy hổng có bán rồi con ơi, chọn món khác trong menu giúp mommy nha 🥺`);
     } else {
-      // assign từng item nếu có mention
-      items = items.map(i => {
-        if (!i.size && text.includes(i.name)) {
-          return { ...i, size };
-        }
-        return i;
-      });
-
-      // fallback: fill những cái còn thiếu
-      items = items.map(i => ({
-        ...i,
-        size: i.size || size
-      }));
+      // Nếu lọc xong không còn món nào thực sự "lạ", coi như khách đang nói chuyện phiếm
+      return await generateReply('Con nhắn tên món cụ thể kèm số lượng để mommy làm đơn cho chính xác nhe! ✨');
     }
-
-    const total = calculateTotal(items, menu);
-
-    userState[chatId] = {
-      status: "pending",
-      items,
-      total
-    };
-
-    const rawReply = `Mẹ ghi nhận:
-      ${formatItems(items)}
-      Tổng: ${total}đ
-
-      Con xác nhận ok nha ❤️`;
-
-    return await generateReply(rawReply);
   }
 
-  // ======================
-  // 🟡 STEP 3: CONFIRM
-  // ======================
-  if (userState[chatId].status === "pending") {
-    if (text.includes('ok') || text.includes('xác nhận')) {
-      const order = userState[chatId];
+  // 7.4. Xử lý khi có món đúng (có thể kèm món lạ)
+  const mergedItems = groupItems(items); // Gộp trùng món
 
-      userState[chatId].status = "confirmed";
+  // Lọc unknownItems để đưa vào thông báo prefix
+  const validUnknown = unknown.filter(u => u.length > 3 && !greetingKeywords.some(kw => u.toLowerCase().includes(kw)));
+  let prefixNote = validUnknown.length > 0 ? `Món "${validUnknown.join(', ')}" mommy hổng có bán nên mẹ không thêm vào đơn nha. 😅\n\n` : "";
 
-      const orderId = Date.now();
-
-      const qr = `https://img.vietqr.io/image/MB-${account}-compact.png?amount=${order.total}&addInfo=DH${orderId}`;
-
-      const rawReply = `Mẹ làm đơn này nha 💖
-        ${formatItems(order.items)}
-        Tổng: ${order.total}đ
-
-        Nội dung CK: DH${orderId}
-
-        Con thanh toán giúp mẹ tại đây nha 😘
-        ${qr}`;
-
-      return await generateReply(rawReply);
-    }
-
-    return await generateReply("Con nói 'ok' hoặc 'xác nhận' để mommy làm nha 😊");
+  const needSize = mergedItems.some(i => !i.size);
+  if (needSize) {
+    saveOrder(chatId, { status: 'ask_size_detail', items: mergedItems });
+    return await generateReply(`${prefixNote}Mẹ hỏi lại chút nha 🥺\n${buildSizeQuestion(mergedItems)}`);
   }
 
-  // ======================
-  // 🔵 STEP 4: RESET
-  // ======================
-  if (userState[chatId].status === "confirmed") {
-    delete userState[chatId];
-    return await generateReply("Con muốn đặt thêm gì nữa không nè 😆");
-  }
+  const total = calculateTotal(mergedItems, menu);
+  saveOrder(chatId, { status: 'pending', items: mergedItems, total });
+
+  return await generateReply(`${prefixNote}Mommy ghi nhận nè:\n${formatItems(mergedItems)}\nTổng: ${total.toLocaleString('vi-VN')}đ\n\nCon xác nhận ok nha ❤️`);
 }
 
 module.exports = { handleMessage };

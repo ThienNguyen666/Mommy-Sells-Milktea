@@ -1,24 +1,31 @@
 {
   "name": "mommy-ban-tra-sua",
   "version": "1.0.0",
-  "description": "",
-  "main": "app.js",
+  "description": "AI-powered milk tea shop chatbot for Telegram",
+  "main": "src/app.js",
   "scripts": {
-    "test": "jest tests/order.spec.js",
-    "test:ai": "jest tests/ai.spec.js"
+    "start": "node src/app.js",
+    "start:cli": "node src/cli.js",
+    "test": "jest tests/order.spec.js --forceExit",
+    "test:ai": "jest tests/ai.spec.js --forceExit",
+    "test:all": "jest --forceExit"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@payos/node": "^2.0.5",
     "csvtojson": "^2.0.14",
-    "dotenv": "^17.4.2",
+    "dotenv": "^16.0.0",
     "express": "^5.2.1",
     "node-telegram-bot-api": "^0.67.0",
-    "openai": "^6.34.0"
+    "openai": "^4.0.0"
   },
   "devDependencies": {
-    "jest": "^30.3.0"
+    "jest": "^29.0.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

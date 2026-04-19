@@ -24,7 +24,18 @@ jest.mock('../src/services/payos.service', () => ({
 
 const { parseOrder } = require('../src/services/ai.service');
 const { handleMessage } = require('../src/services/order.service');
+const { clearOrder } = require('../src/services/order.store');
 const { getMenu } = require('../src/services/menu.service');
+
+// Dọn state trước mỗi test để tránh leak
+beforeEach(() => {
+  // Clear tất cả các chatId test
+  for (let i = 1; i <= 25; i++) {
+    clearOrder(`t${i}`);
+    clearOrder(`t${i}-total`);
+    clearOrder(`t${i}-extra`);
+  }
+});
 
 describe("Order Bot", () => {
 
@@ -99,7 +110,8 @@ describe("Order Bot", () => {
     });
 
     const res = await handleMessage(chatId, "abc");
-    expect(res).toMatch(/122/);
+    // 2 * 45000 + 1 * 32000 = 122000
+    expect(res.replace(/\./g, "")).toMatch(/122/);
   });
 
   test("Large order total must be correct", async () => {
@@ -113,22 +125,18 @@ describe("Order Bot", () => {
       size: index % 2 === 0 ? "M" : "L"
     }));
 
-    parseOrder.mockResolvedValue({
-      items: generatedItems
-    });
+    parseOrder.mockResolvedValue({ items: generatedItems });
+
     const res = await handleMessage(chatId, "order tất cả");
 
     let expectedTotal = 0;
-
     for (let i = 0; i < menu.length; i++) {
       const item = menu[i];
       const quantity = (i % 3) + 1;
       const price = i % 2 === 0 ? item.priceM : item.priceL;
-
       expectedTotal += price * quantity;
     }
 
-    // format kiểu 122000 hoặc 122.000 đều pass
     expect(res.replace(/\./g, "")).toContain(expectedTotal.toString());
   });
 
@@ -244,20 +252,15 @@ describe("Order Bot", () => {
   });
 
   // ======================
-  // HARD EDGE CASE 
+  // HARD EDGE CASES
   // ======================
-  test("Very long input", async () => {
+  test("Very long input → truncated gracefully", async () => {
     const chatId = "t17";
 
-    parseOrder.mockResolvedValue({
-      items: [{ name: "trà dâu tây", quantity: 1, size: "M" }]
-    });
-
-    const longText = "trà dâu ".repeat(100);
-
+    const longText = "trà dâu ".repeat(200); // > 1000 chars
     const res = await handleMessage(chatId, longText);
 
-    expect(res).toMatch(/tổng/i);
+    expect(res.toLowerCase()).toContain("dài quá");
   });
 
   test("Mixed language input", async () => {

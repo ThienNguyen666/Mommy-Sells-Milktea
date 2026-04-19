@@ -13,10 +13,15 @@ async function getMenu() {
       name: item.name.toLowerCase(),
       priceM: Number(item.price_m),
       priceL: Number(item.price_l),
-      category: item.category
+      category: item.category,
     }));
 
   return cachedMenu;
 }
 
-module.exports = { getMenu };
+// Dùng trong tests để reset cache
+function resetMenuCache() {
+  cachedMenu = null;
+}
+
+module.exports = { getMenu, resetMenuCache };

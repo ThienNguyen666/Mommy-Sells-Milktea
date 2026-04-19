@@ -1,3 +1,4 @@
+// In-memory store: chatId → order state
 const ordersByChatId = new Map();
 const ordersByOrderCode = new Map();
 
@@ -38,7 +39,6 @@ function markOrderPaid(orderCode, webhookData) {
 
   ordersByChatId.set(current.chatId, next);
   ordersByOrderCode.set(Number(orderCode), next);
-
   return next;
 }
 

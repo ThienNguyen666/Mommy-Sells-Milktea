@@ -1,10 +1,22 @@
-const { PayOS } = require('@payos/node');
+const PayOS = require('@payos/node');
 
-const payOS = new PayOS({
-  clientId: process.env.PAYOS_CLIENT_ID,
-  apiKey: process.env.PAYOS_API_KEY,
-  checksumKey: process.env.PAYOS_CHECKSUM_KEY,
-});
+// Khởi tạo PayOS client (graceful: không crash nếu thiếu env)
+let payosClient = null;
+
+function getClient() {
+  if (payosClient) return payosClient;
+
+  const clientId = process.env.PAYOS_CLIENT_ID;
+  const apiKey = process.env.PAYOS_API_KEY;
+  const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
+
+  if (!clientId || !apiKey || !checksumKey) {
+    return null;
+  }
+
+  payosClient = new PayOS(clientId, apiKey, checksumKey);
+  return payosClient;
+}
 
 function buildPayOSItems(items, menu) {
   return items.map((item) => {
@@ -23,19 +35,36 @@ function buildPayOSItems(items, menu) {
   });
 }
 
-async function createPayOSPayment({ orderCode, amount, items }) {
-  return payOS.paymentRequests.create({
+async function createPayOSPayment({ orderCode, amount, items, description }) {
+  const client = getClient();
+
+  if (!client) {
+    throw new Error('PayOS chưa được cấu hình (thiếu env PAYOS_*)');
+  }
+
+  const appUrl = process.env.APP_URL || 'http://localhost:4300';
+  const returnUrl = process.env.PAYOS_RETURN_URL || `${appUrl}/payos/return`;
+  const cancelUrl = process.env.PAYOS_CANCEL_URL || `${appUrl}/payos/cancel`;
+
+  // @payos/node v2.x: payos.createPaymentLink(body)
+  return client.createPaymentLink({
     orderCode,
     amount,
-    description: `DH${orderCode}`,
+    description: description || `DH${orderCode}`,
     items,
-    cancelUrl: process.env.PAYOS_CANCEL_URL || `${process.env.APP_URL}/payos/cancel`,
-    returnUrl: process.env.PAYOS_RETURN_URL || `${process.env.APP_URL}/payos/return`,
+    returnUrl,
+    cancelUrl,
   });
 }
 
 function verifyPayOSWebhook(body) {
-  return payOS.webhooks.verify(body);
+  const client = getClient();
+
+  if (!client) {
+    throw new Error('PayOS chưa được cấu hình');
+  }
+
+  return client.verifyPaymentWebhookData(body);
 }
 
 module.exports = {
