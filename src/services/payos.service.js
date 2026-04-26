@@ -1,6 +1,8 @@
-const PayOS = require('@payos/node');
+// @payos/node v2.x uses NAMED export { PayOS }, NOT default export
+// Constructor: new PayOS({ clientId, apiKey, checksumKey })  ← object, NOT positional args
+// Methods: paymentRequests.create(), webhooks.verify()
+const { PayOS } = require('@payos/node');
 
-// Khởi tạo PayOS client (graceful: không crash nếu thiếu env)
 let payosClient = null;
 
 function getClient() {
@@ -14,7 +16,8 @@ function getClient() {
     return null;
   }
 
-  payosClient = new PayOS(clientId, apiKey, checksumKey);
+  // v2.x constructor takes OPTIONS OBJECT, not positional args
+  payosClient = new PayOS({ clientId, apiKey, checksumKey });
   return payosClient;
 }
 
@@ -24,9 +27,7 @@ function buildPayOSItems(items, menu) {
     if (!found) {
       throw new Error(`Không tìm thấy món trong menu: ${item.name}`);
     }
-
     const price = item.size === 'L' ? found.priceL : found.priceM;
-
     return {
       name: `${item.name} (${item.size})`,
       quantity: item.quantity,
@@ -37,7 +38,6 @@ function buildPayOSItems(items, menu) {
 
 async function createPayOSPayment({ orderCode, amount, items, description }) {
   const client = getClient();
-
   if (!client) {
     throw new Error('PayOS chưa được cấu hình (thiếu env PAYOS_*)');
   }
@@ -46,8 +46,8 @@ async function createPayOSPayment({ orderCode, amount, items, description }) {
   const returnUrl = process.env.PAYOS_RETURN_URL || `${appUrl}/payos/return`;
   const cancelUrl = process.env.PAYOS_CANCEL_URL || `${appUrl}/payos/cancel`;
 
-  // @payos/node v2.x: payos.createPaymentLink(body)
-  return client.createPaymentLink({
+  // v2.x: client.paymentRequests.create(body)
+  return client.paymentRequests.create({
     orderCode,
     amount,
     description: description || `DH${orderCode}`,
@@ -59,12 +59,11 @@ async function createPayOSPayment({ orderCode, amount, items, description }) {
 
 function verifyPayOSWebhook(body) {
   const client = getClient();
-
   if (!client) {
     throw new Error('PayOS chưa được cấu hình');
   }
-
-  return client.verifyPaymentWebhookData(body);
+  // v2.x: client.webhooks.verify(body) — returns Promise
+  return client.webhooks.verify(body);
 }
 
 module.exports = {

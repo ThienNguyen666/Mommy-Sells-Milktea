@@ -1,15 +1,15 @@
-const OpenAI = require("openai");
+const OpenAI = require('openai');
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
 async function parseOrder(message, menu, currentItems = []) {
-  const menuText = menu.map(m => `- ${m.name}`).join("\n");
-  
-  const context = currentItems.length > 0 
+  const menuText = menu.map(m => `- ${m.name}`).join('\n');
+
+  const context = currentItems.length > 0
     ? `Đơn hàng khách đang có: ${currentItems.map(i => `${i.quantity} ${i.name} size ${i.size || 'chưa chọn'}`).join(', ')}.`
-    : "Hiện chưa có đơn hàng nào.";
+    : 'Hiện chưa có đơn hàng nào.';
 
   const prompt = `
 Bạn là hệ thống nhận diện đơn hàng cho quán trà sữa.
@@ -37,24 +37,27 @@ FORMAT JSON:
 }
 
 INPUT: "${message}"
-`
+`;
 
-  try {
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "Bạn là chuyên gia bóc tách đơn hàng trà sữa chính xác 100%." },
-        { role: "user", content: prompt }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.1 
-    });
+  // Sẽ THROW nếu lỗi để caller (order.service) biết dùng fallback
+  const completion = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      {
+        role: 'system',
+        content: 'Bạn là chuyên gia bóc tách đơn hàng trà sữa chính xác 100%.',
+      },
+      { role: 'user', content: prompt },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.1,
+  });
 
-    return JSON.parse(completion.choices[0].message.content);
-  } catch (err) {
-    console.error("AI parse error:", err.message);
-    return { items: [], unknownItems: [] };
+  const parsed = JSON.parse(completion.choices[0].message.content);
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('AI returned invalid JSON structure');
   }
+  return parsed;
 }
 
 module.exports = { parseOrder };
