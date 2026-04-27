@@ -137,15 +137,53 @@ function extractQuantity(text) {
 }
 
 function parseOrderFallback(text, menu) {
-  const lowerText = text.toLowerCase();
-  const size = detectSize(lowerText);
-  const qty = extractQuantity(lowerText);
-  const matched = fuzzyMatchMenu(lowerText, menu);
-  if (matched.length === 0) return { items: [], unknownItems: [] };
-  return {
-    items: [{ name: matched[0].name, quantity: qty, size: size || null }],
-    unknownItems: [],
-  };
+  const items = [];
+  const unknownItems = [];
+  let remainingText = text.toLowerCase().trim();
+
+  // 1. Sắp xếp menu theo độ dài tên món giảm dần
+  // Để tránh việc "Trà Sữa Trân Châu Đen" bị nhận nhầm thành "Trà Sữa"
+  const sortedMenu = [...menu].sort((a, b) => b.name.length - a.name.length);
+
+  // 2. Quét toàn bộ menu trong văn bản
+  for (const menuItem of sortedMenu) {
+    const itemNameLower = menuItem.name.toLowerCase();
+    
+    // Nếu tìm thấy tên món trong câu
+    if (remainingText.includes(itemNameLower)) {
+      // Dùng RegExp để tìm tất cả các vị trí món này xuất hiện (tránh sót nếu khách đặt 2 lần cùng 1 món)
+      const regex = new RegExp(itemNameLower, 'gi');
+      let match;
+      
+      while ((match = regex.exec(text.toLowerCase())) !== null) {
+        // Tìm số lượng ở phần văn bản ngay trước tên món
+        const beforeText = text.substring(Math.max(0, match.index - 10), match.index).trim();
+        const qtyMatch = beforeText.match(/(\d+)/);
+        const quantity = qtyMatch ? parseInt(qtyMatch[0], 10) : 1;
+
+        // Tìm size ở phần văn bản ngay sau tên món
+        const afterText = text.substring(match.index + itemNameLower.length, match.index + itemNameLower.length + 10).trim();
+        const size = detectSize(afterText);
+
+        items.push({
+          name: menuItem.name,
+          quantity: quantity,
+          size: size || null
+        });
+      }
+      
+      // Xóa món đã tìm được ra khỏi remainingText để sau này tìm unknown cho chính xác
+      remainingText = remainingText.split(itemNameLower).join(' ');
+    }
+  }
+
+  // 3. Xử lý Unknown (Những từ dài mà không phải món trong menu)
+  if (items.length === 0) {
+    // Nếu không tìm thấy bất cứ món nào, coi như cả câu là unknown
+    unknownItems.push(text);
+  }
+
+  return { items, unknownItems };
 }
 
 // ========================
@@ -161,7 +199,7 @@ async function handleMessage(chatId, text) {
   const currentOrder = getOrder(chatId);
 
   // 1. RESET
-  const resetKeywords = ['đổi món', 'thay đơn', 'đặt món mới', 'reset', 'đổi đơn', 'hủy đơn'];
+  const resetKeywords = ['đổi', 'đổi món', 'thay đơn', 'đặt món mới', 'reset', 'đổi đơn', 'hủy đơn', 'đặt lại', 'đặt lại từ đầu'];
   if (resetKeywords.some(kw => lowerText.includes(kw))) {
     clearOrder(chatId);
     return 'Mommy đã xóa đơn cũ rồi, con nhắn món mới muốn đặt cho mommy nha! 🥰';
@@ -223,11 +261,12 @@ async function handleMessage(chatId, text) {
   let aiAvailable = true;
   try {
     parsed = await parseOrder(lowerText, menu, currentOrder?.items || []);
-    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid AI response');
+    if (!parsed || typeof parsed !== 'object' || !parsed.items) throw new Error('Invalid AI response');
   } catch (err) {
-    console.error('AI không khả dụng, dùng fallback parser:', err.message);
+    console.error('AI HẾT HẠN - Mommy chuyển sang quét thủ công!');
     aiAvailable = false;
-    parsed = parseOrderFallback(lowerText, menu);
+    // Truyền cả menu vào để hàm fallback có dữ liệu đối chiếu
+    parsed = parseOrderFallback(lowerText, menu); 
   }
 
   const items = parsed.items || [];

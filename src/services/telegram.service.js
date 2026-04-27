@@ -41,34 +41,47 @@ async function buildMenuText() {
     if (!categories[cat]) categories[cat] = [];
     categories[cat].push(item);
   }
+
   const catEmoji = {
     'Trà Sữa':      '🧋',
-    'Trà Trái Cây': '🍓',
+    'Trà Trái Cây': '🍎',
     'Cà Phê':       '☕',
     'Đá Xay':       '🧊',
     'Topping':      '✨',
   };
-  let text = '*MENU MẸ BÁN TRÀ SỮA*\n';
-  text += '━━━━━━━━━━━━━━━━━━━━━━\n\n';
+
+  let text = '✨ *TIỆM TRÀ SỮA NHÀ MOMMY* ✨\n';
+  text += '━━━━━━━━━━━━━━━━━━━━\n';
+  text += '🌿 _Nguyên liệu tươi sạch - Đậm vị yêu thương_\n\n';
+
   for (const [cat, items] of Object.entries(categories)) {
-    const emoji = catEmoji[cat] || '🍵';
+    const emoji = catEmoji[cat] || '🍹';
     text += `${emoji} *${cat.toUpperCase()}*\n`;
-    text += '─────────────────────\n';
+    text += '──────────────────\n';
+    
     for (const item of items) {
+      // Viết hoa chữ cái đầu cho đẹp
       const name = item.name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
       const priceM = item.priceM.toLocaleString('vi-VN');
       const priceL = item.priceL.toLocaleString('vi-VN');
-      if (item.priceM === item.priceL) {
-        text += `  • ${name}\n    💰 ${priceM}đ\n`;
+
+      if (cat === 'Topping') {
+        text += `🔹 *${name}* ➜ \`${priceM}đ\`\n`;
+      } else if (item.priceM === item.priceL) {
+        text += `🔸 *${name}* ➜ \`${priceM}đ\`\n`;
       } else {
-        text += `  • ${name}\n    💰 M: ${priceM}đ  |  L: ${priceL}đ\n`;
+        text += `🔸 *${name}*\n`;
+        text += `   ╰ _Size M:_ \`${priceM}đ\`  |  _Size L:_ \`${priceL}đ\`\n`;
       }
     }
     text += '\n';
   }
-  text += '━━━━━━━━━━━━━━━━━━━━━━\n';
-  text += '💬 Nhắn tên món + số lượng + size để đặt nha con!\n';
-  text += '_Ví dụ: "2 trà sữa trân châu đen size L"_';
+
+  text += '━━━━━━━━━━━━━━━━━━━━\n';
+  text += '💡 *CÁCH ĐẶT MÓN NHANH:*\n';
+  text += '👉 _"2 Trà sữa trân châu đen L, 1 Cà phê sữa M"_\n';
+  text += '👉 _"Cho con 1 trà dâu L thêm trân châu trắng"_\n';
+  
   return text;
 }
 
@@ -79,8 +92,8 @@ function mainMenuKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: '📋 Xem menu' }, { text: '🛒 Đặt món' }],
-        [{ text: '❓ Hướng dẫn' }],
+        [{ text: '📜 Thực đơn hôm nay' }, { text: '🥤 Bắt đầu đặt món' }],
+        [{ text: '✨ Hướng dẫn' }, { text: '🔄 Làm mới đơn' }],
       ],
       resize_keyboard: true,
       one_time_keyboard: false,
@@ -144,14 +157,15 @@ function afterPaymentKeyboard() {
 // ========================
 function normalizeInput(text) {
   const map = {
-    '📋 xem menu':       'xem menu',
-    '🛒 đặt món':        'đặt món',
+    '📜 thực đơn hôm nay': 'xem menu',
+    '🥤 bắt đầu đặt món': 'đặt món',
     '🛒 đặt món mới':    'đặt lại',
-    '❓ hướng dẫn':      'hướng dẫn',
+    '✨ hướng dẫn':   'hướng dẫn',
+    '🔄 làm mới đơn':    'đặt lại',
     '✅ xác nhận đơn':   'ok',
     '✏️ đổi món':        'đổi',
-    '🔄 đặt lại từ đầu': 'đặt lại',
     '💳 thanh toán':     'thanh toán',
+    '🔄 đặt lại từ đầu': 'đặt lại',
     'size m':            'm',
     'size l':            'l',
     'size m hết':        'm hết',
@@ -210,7 +224,7 @@ async function sendPaymentInfo(chatId, paymentData, orderItems, total, orderId) 
     `📝 *Nội dung CK:* \`${description}\`\n` +
     `━━━━━━━━━━━━━━━━━━\n` +
     `👆 Quét mã QR hoặc CK theo thông tin trên\n` +
-    `Xong nhắn *"đã chuyển"* để mommy xác nhận nha! 😘`;
+    `🚀 *Thanh toán tự động:* Con chỉ cần quét mã QR, hệ thống sẽ tự động xác nhận và thông báo cho con ngay khi nhận được tiền. KHÔNG cần gửi ảnh chụp màn hình đâu nè! 💖`;
 
   // 5. Tạo Inline Keyboard (Nút bấm xịn)
   const inlineKeyboard = {
@@ -300,36 +314,58 @@ async function notifyPaymentCancelled(chatId, orderData) {
 async function handleSpecial(chatId, normalized) {
   if (normalized === 'xem menu') {
     const menuText = await buildMenuText();
-    await bot.sendMessage(chatId, menuText, { parse_mode: 'Markdown', ...mainMenuKeyboard() });
-    return true;
-  }
-  if (normalized === 'hướng dẫn') {
-    const guide =
-      `🌸 *HƯỚNG DẪN ĐẶT HÀNG*\n\n` +
-      `1️⃣ *Nhắn tên món* muốn đặt\n` +
-      `   _VD: "2 trà sữa trân châu đen size L"_\n\n` +
-      `2️⃣ *Chọn size* M hoặc L nếu chưa nói\n\n` +
-      `3️⃣ *Xác nhận* đơn hàng\n\n` +
-      `4️⃣ *Quét mã QR* hoặc CK theo thông tin\n\n` +
-      `5️⃣ Nhắn *"đã chuyển"* để mommy xác nhận\n\n` +
-      `━━━━━━━━━━━━━━━\n` +
-      `📞 Mọi thắc mắc cứ nhắn mommy nha con 💖`;
-    await bot.sendMessage(chatId, guide, { parse_mode: 'Markdown', ...mainMenuKeyboard() });
-    return true;
-  }
-  if (normalized === 'đặt lại') {
-    clearOrder(chatId);
-    await bot.sendMessage(chatId, '🔄 Đã reset đơn hàng!\nCon nhắn tên món muốn đặt nha 😊', mainMenuKeyboard());
-    return true;
-  }
-  if (normalized === 'đặt món') {
-    const menuText = await buildMenuText();
-    await bot.sendMessage(chatId, menuText + '\n\n👇 *Nhắn tên món để đặt ngay nha con!*', {
-      parse_mode: 'Markdown',
-      ...mainMenuKeyboard(),
+    // Thêm một icon chào mừng ở đầu menu
+    await bot.sendMessage(chatId, menuText, { 
+      parse_mode: 'Markdown', 
+      ...mainMenuKeyboard() 
     });
     return true;
   }
+
+  if (normalized === 'hướng dẫn') {
+    const guide =
+      `✨ *TRẢI NGHIỆM ĐẶT MÓN 5 SAO TẠI NHÀ MOMMY* ✨\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `1️⃣ *CHỌN MÓN YÊU THÍCH* 🥤\n` +
+      `   _Nhắn tên món kèm số lượng và size._\n` +
+      `   VD: "Cho con 1 trà sữa khoai môn L"\n\n` +
+      `2️⃣ *XÁC NHẬN ĐƠN HÀNG* ✅\n` +
+      `   _Kiểm tra lại danh sách món và bấm xác nhận._\n\n` +
+      `3️⃣ *THANH TOÁN "TING TING"* 💳\n` +
+      `   _Quét mã QR PayOS siêu tốc. Hệ thống sẽ tự động xác nhận sau 3 giây!_\n\n` +
+      `4️⃣ *THƯỞNG THỨC* 🎉\n` +
+      `   _Mommy sẽ làm máy và giao đến tận tay con ngay._\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `💎 _Mọi yêu cầu đặc biệt con cứ nhắn trực tiếp tại đây nhé!_`;
+      
+    await bot.sendMessage(chatId, guide, { 
+      parse_mode: 'Markdown', 
+      ...mainMenuKeyboard() 
+    });
+    return true;
+  }
+
+  if (normalized === 'đặt lại') {
+    clearOrder(chatId);
+    await bot.sendMessage(chatId, 
+      `🔄 *ĐÃ LÀM MỚI QUẦY ORDER*\n\n` +
+      `Mommy đã dọn dẹp đơn cũ. Mời con xem lại menu và chọn món mới nha! 🥰`, 
+      { parse_mode: 'Markdown', ...mainMenuKeyboard() }
+    );
+    return true;
+  }
+
+  if (normalized === 'đặt món') {
+    const menuText = await buildMenuText();
+    await bot.sendMessage(chatId, 
+      `🌟 *MỜI CON CHỌN MÓN* 🌟\n\n` +
+      `Hôm nay toàn món ngon thôi nè. Con nhắn tên món mommy làm cho nhe!\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` + menuText, 
+      { parse_mode: 'Markdown', ...mainMenuKeyboard() }
+    );
+    return true;
+  }
+
   return false;
 }
 
@@ -348,14 +384,21 @@ function startBot() {
 
   bot.onText(/\/start/, async (msg) => {
     const chatId = String(msg.chat.id);
-    const firstName = msg.from?.first_name || 'con';
+    const firstName = msg.from?.first_name || 'con yêu';
     clearOrder(chatId);
+    
     const welcome =
-      `🌸 *Chào ${firstName}!*\n\n` +
-      `Mommy là AI trợ lý của quán trà sữa 🧋\n` +
-      `Mommy sẽ giúp con đặt hàng nhanh gọn nha!\n\n` +
-      `👇 *Bấm nút bên dưới hoặc nhắn thẳng tên món!*`;
-    await bot.sendMessage(chatId, welcome, { parse_mode: 'Markdown', ...mainMenuKeyboard() });
+      `👋 *Chào mừng ${firstName} đã ghé Tiệm Nhà Mommy!*\n\n` +
+      `🌟 Hôm nay con muốn uống gì nè? Mommy có đủ các loại trà sữa đậm vị, cà phê tỉnh táo và đá xay mát lạnh luôn.\n\n` +
+      `👇 *Con xem menu bên dưới rồi nhắn tin đặt món trực tiếp với mommy nhé!*`;
+    
+    // Gửi lời chào kèm bàn phím chính
+    await bot.sendMessage(chatId, welcome, { 
+      parse_mode: 'Markdown', 
+      ...mainMenuKeyboard() 
+    });
+    
+    // Gửi menu
     const menuText = await buildMenuText();
     await bot.sendMessage(chatId, menuText, { parse_mode: 'Markdown' });
   });
@@ -413,24 +456,39 @@ function startBot() {
       const orderId = action.replace('cancel_', '');
       
       try {
-        const cancelUrl = `https://mommy-sells-milktea.onrender.com/payos/cancel?orderCode=${orderId}&cancel=true`;
+        // 1. Gọi trực tiếp dịch vụ PayOS để hủy link trên hệ thống của họ
+        // Giả sử con đã có hàm cancelPaymentLink trong payos.service.js
+        const { cancelPayOSPayment } = require('./payos.service'); 
         
-        await axios.get(cancelUrl);
+        // Báo cho PayOS biết là đơn này bỏ nhe
+        await cancelPayOSPayment(orderId);
 
-        // Thông báo và xóa menu cũ
-        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Đang hủy đơn...' });
-        await bot.editMessageCaption(`❌ *Đơn hàng DH${orderId} đã được hủy.*`, {
+        // 2. Phản hồi cho Telegram là đang xử lý
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Đang hủy đơn trên hệ thống...' });
+
+        // 3. Cập nhật giao diện tin nhắn cũ (Xóa cái ảnh QR đi cho đỡ rối)
+        await bot.editMessageCaption(`❌ *ĐƠN HÀNG DH${orderId} ĐÃ HỦY THÀNH CÔNG*\n\n_Hệ thống PayOS đã ghi nhận hủy đơn này của con._`, {
           chat_id: chatId,
           message_id: callbackQuery.message.message_id,
           parse_mode: 'Markdown'
         });
         
+        // 4. Xóa đơn trong bộ nhớ nội bộ (Store)
         clearOrder(chatId);
-        await bot.sendMessage(chatId, 'Mommy đã hủy đơn rồi, con muốn uống món khác thì xem menu nha! 🥰', mainMenuKeyboard());
+
+        // 5. Gửi lời nhắn an ủi từ Mommy
+        await bot.sendMessage(chatId, 
+          `Mommy đã hủy đơn *DH${orderId}* rồi nhe. Đừng buồn, khi nào thèm lại cứ nhắn mommy, mommy luôn đợi con! 🥰`, 
+          { parse_mode: 'Markdown', ...mainMenuKeyboard() }
+        );
         
       } catch (err) {
-        console.error('Lỗi khi gọi API hủy:', err.message);
-        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Hủy thất bại, con thử lại nhé!' });
+        console.error('Lỗi khi hủy đơn PayOS:', err.message);
+        await bot.answerCallbackQuery(callbackQuery.id, { 
+          text: 'Hủy trên hệ thống gặp lỗi, nhưng mommy đã xóa đơn tạm cho con rồi nhé!' 
+        });
+        // Vẫn nên clearOrder để khách đặt được đơn mới
+        clearOrder(chatId);
       }
     }
   });

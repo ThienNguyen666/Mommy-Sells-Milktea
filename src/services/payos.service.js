@@ -57,6 +57,32 @@ async function createPayOSPayment({ orderCode, amount, items, description }) {
   });
 }
 
+// Trong services/payos.service.js
+async function cancelPayOSPayment(orderCode) {
+  try {
+    // Nếu con dùng thư viện @payos/node:
+    // return await payos.cancelPaymentLink(orderCode, 'Khách hàng tự hủy trên Telegram');
+    
+    // Hoặc nếu con dùng axios gọi API:
+    const axios = require('axios');
+    const response = await axios.post(
+      `https://api-merchant.payos.vn/v2/payment-requests/${orderCode}/cancel`,
+      { cancellationReason: 'Khách hàng chủ động hủy qua Bot' },
+      {
+        headers: {
+          'x-client-id': process.env.PAYOS_CLIENT_ID,
+          'x-api-key': process.env.PAYOS_API_KEY,
+          'x-api-validate': process.env.PAYOS_CHECKSUM_KEY, // checksum nếu cần
+        }
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('PayOS Cancel Error:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
 function verifyPayOSWebhook(body) {
   const client = getClient();
   if (!client) {
@@ -70,4 +96,5 @@ module.exports = {
   createPayOSPayment,
   verifyPayOSWebhook,
   buildPayOSItems,
+  cancelPayOSPayment
 };
