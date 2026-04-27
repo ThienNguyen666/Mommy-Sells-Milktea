@@ -62,7 +62,7 @@ function generateVietQR(total, orderId, addInfo) {
 // để telegram.service.js gọi sendPaymentInfo() với sendPhoto
 // Fallback về string text nếu PayOS fail hoàn toàn (CLI / no bot)
 // ========================
-async function buildPaymentResponse(items, total, orderId) {
+async function buildPaymentResponse(chatId, items, total, orderId) {
   let paymentData = null;
 
   try {
@@ -77,7 +77,16 @@ async function buildPaymentResponse(items, total, orderId) {
     });
     // CreatePaymentLinkResponse: { bin, accountNumber, accountName, amount, description, orderCode, qrCode, checkoutUrl, ... }
     paymentData = response;
+
     console.log('PayOS payment created:', { orderCode: response.orderCode, checkoutUrl: response.checkoutUrl });
+    saveOrder(chatId, { 
+          status: 'confirmed', 
+          items, 
+          total, 
+          orderCode: response.orderCode, // Dùng code từ PayOS cho chắc
+          paymentData: response 
+        });  
+    console.log('Đã đồng bộ Store với PayOS cho đơn:', response.orderCode);          
   } catch (err) {
     console.log('PayOS không khả dụng, dùng VietQR fallback:', err.message);
   }
@@ -178,7 +187,7 @@ async function handleMessage(chatId, text) {
       return 'Con đặt đơn trước rồi mommy gửi thông tin thanh toán nha 😘';
     }
     const orderId = currentOrder.orderCode || Date.now();
-    return await buildPaymentResponse(currentOrder.items, currentOrder.total, orderId);
+    return await buildPaymentResponse(chatId, currentOrder.items, currentOrder.total, orderId);
   }
 
   // 5. CHỌN SIZE
@@ -199,7 +208,7 @@ async function handleMessage(chatId, text) {
   ) {
     const orderId = Date.now();
     saveOrder(chatId, { ...currentOrder, status: 'confirmed', orderCode: orderId });
-    return await buildPaymentResponse(currentOrder.items, currentOrder.total, orderId);
+    return await buildPaymentResponse(chatId ,currentOrder.items, currentOrder.total, orderId);
   }
 
   // 7. PARSE ĐƠN BẰNG AI (với fallback khi key hết hạn)

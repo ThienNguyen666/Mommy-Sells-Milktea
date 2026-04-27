@@ -3,6 +3,7 @@ const QRCode = require('qrcode');
 const { handleMessage } = require('./order.service');
 const { getMenu } = require('./menu.service');
 const { getOrder, clearOrder } = require('./order.store');
+const axios = require('axios');
 
 let bot = null;
 
@@ -29,24 +30,6 @@ const BANK_NAMES = {
   '970431': 'Eximbank',
   '970434': 'Indovina Bank',
 };
-
-// ========================
-// GENERATE QR BUFFER từ EMV string của PayOS
-// ========================
-async function generateQRBuffer(qrCodeString) {
-  return new Promise((resolve, reject) => {
-    QRCode.toBuffer(qrCodeString, {
-      type: 'png',
-      width: 512,
-      margin: 2,
-      color: { dark: '#000000', light: '#ffffff' },
-    }, (err, buf) => {
-      if (err) reject(err);
-      else resolve(buf);
-    });
-  });
-}
-
 // ========================
 // MENU FORMATTER
 // ========================
@@ -188,12 +171,11 @@ function keyboardForState(chatId) {
 
 // ========================
 // SEND PAYMENT INFO
-// qrCode từ PayOS là EMV QR string → dùng qrcode lib generate PNG buffer
 // Fallback: VietQR URL nếu generate fail
 // ========================
+
 async function sendPaymentInfo(chatId, paymentData, orderItems, total, orderId) {
   const {
-    qrCode,          // EMV QR string (e.g. "000201010212...")
     accountNumber,
     accountName,
     bin,
@@ -202,14 +184,22 @@ async function sendPaymentInfo(chatId, paymentData, orderItems, total, orderId) 
     checkoutUrl,
   } = paymentData;
 
+  // 1. Lấy thông tin ngân hàng
   const bankName = BANK_NAMES[String(bin)] || `Bank (${bin})`;
+  const bankCode = BANK_BIN_TO_CODE[String(bin)] || 'OCB';
 
+  // 2. Tạo link ảnh VietQR Pro (Ưu điểm: Đẹp, chuyên nghiệp, có logo)
+  const vietQRUrl = `https://img.vietqr.io/image/${bankCode}-${accountNumber}-vietqr_pro.jpg` +
+    `?amount=${amount}&addInfo=${encodeURIComponent(description)}&accountName=${encodeURIComponent(accountName)}`;
+
+  // 3. Format danh sách món ăn
   const itemsText = orderItems
     .map(i => `  • ${i.name} (${i.size}) x${i.quantity}`)
     .join('\n');
 
+  // 4. Tạo Caption đầy đủ thông tin (Kết hợp cả 2 hàm)
   const caption =
-    `💖 *Đơn hàng DH${orderId}*\n` +
+    `💖 *ĐƠN HÀNG DH${orderId}*\n` +
     `━━━━━━━━━━━━━━━━━━\n` +
     `${itemsText}\n` +
     `━━━━━━━━━━━━━━━━━━\n` +
@@ -222,58 +212,31 @@ async function sendPaymentInfo(chatId, paymentData, orderItems, total, orderId) 
     `👆 Quét mã QR hoặc CK theo thông tin trên\n` +
     `Xong nhắn *"đã chuyển"* để mommy xác nhận nha! 😘`;
 
-  // Inline button PayOS (luôn hiện nếu có checkoutUrl)
-  const inlineKeyboard = checkoutUrl
-    ? { reply_markup: { inline_keyboard: [[{ text: '💳 Thanh toán qua PayOS', url: checkoutUrl }]] } }
-    : {};
-
-  // --- Bước 1: Thử generate QR PNG từ EMV string ---
-  if (qrCode && typeof qrCode === 'string' && qrCode.length > 10) {
-    try {
-      const qrBuffer = await generateQRBuffer(qrCode);
-      await bot.sendPhoto(chatId, qrBuffer, {
-        caption,
-        parse_mode: 'Markdown',
-        filename: `qr_DH${orderId}.png`,
-        contentType: 'image/png',
-        ...paymentKeyboard(),
-      });
-      // Gửi thêm inline button PayOS
-      if (checkoutUrl) {
-        await bot.sendMessage(chatId, '💳 Hoặc bấm để thanh toán qua PayOS:', inlineKeyboard);
-      }
-      return;
-    } catch (qrErr) {
-      console.error('Lỗi generate QR buffer:', qrErr.message);
+  // 5. Tạo Inline Keyboard (Nút bấm xịn)
+  const inlineKeyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '💳 Thanh toán Online (PayOS)', url: checkoutUrl }],
+        [{ text: '❌ Hủy đơn hàng', callback_data: `cancel_${orderId}` }]
+      ]
     }
-  }
-
-  // --- Bước 2: Fallback VietQR URL ---
-  const account = process.env.ACCOUNT || accountNumber;
-  const bankCode = BANK_BIN_TO_CODE[String(bin)] || 'MB'; // map BIN → VietQR bank code
-  const vietQRUrl = `https://img.vietqr.io/image/${bankCode}-${account}-compact.png` +
-    `?amount=${amount}&addInfo=${encodeURIComponent(description)}&accountName=${encodeURIComponent(accountName)}`;
+  };
 
   try {
+    // Ưu tiên gửi ảnh QR Pro trước
     await bot.sendPhoto(chatId, vietQRUrl, {
       caption,
       parse_mode: 'Markdown',
-      ...paymentKeyboard(),
+      ...inlineKeyboard
     });
-    if (checkoutUrl) {
-      await bot.sendMessage(chatId, '💳 Hoặc bấm để thanh toán qua PayOS:', inlineKeyboard);
-    }
-    return;
-  } catch (vietQRErr) {
-    console.error('VietQR cũng lỗi:', vietQRErr.message);
+  } catch (err) {
+    console.error('Lỗi gửi QR Pro, đang thử fallback text:', err.message);
+    // Nếu link ảnh die, gửi text kèm nút bấm để khách vẫn thanh toán được
+    await bot.sendMessage(chatId, caption, {
+      parse_mode: 'Markdown',
+      ...inlineKeyboard
+    });
   }
-
-  // --- Bước 3: Fallback cuối - text + link ---
-  const textMsg = caption + (checkoutUrl ? `\n\n🔗 [Bấm để thanh toán qua PayOS](${checkoutUrl})` : '');
-  await bot.sendMessage(chatId, textMsg, {
-    parse_mode: 'Markdown',
-    ...paymentKeyboard(),
-  });
 }
 
 // Map BIN → VietQR bank short code
@@ -439,6 +402,36 @@ function startBot() {
       try {
         await bot.sendMessage(chatId, 'Mommy bị lỗi rồi con ơi, thử lại nha 😭', mainMenuKeyboard());
       } catch (_) {}
+    }
+  });
+
+  bot.on('callback_query', async (callbackQuery) => {
+    const chatId = String(callbackQuery.message.chat.id);
+    const action = callbackQuery.data;
+
+    if (action.startsWith('cancel_')) {
+      const orderId = action.replace('cancel_', '');
+      
+      try {
+        const cancelUrl = `https://mommy-sells-milktea.onrender.com/payos/cancel?orderCode=${orderId}&cancel=true`;
+        
+        await axios.get(cancelUrl);
+
+        // Thông báo và xóa menu cũ
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Đang hủy đơn...' });
+        await bot.editMessageCaption(`❌ *Đơn hàng DH${orderId} đã được hủy.*`, {
+          chat_id: chatId,
+          message_id: callbackQuery.message.message_id,
+          parse_mode: 'Markdown'
+        });
+        
+        clearOrder(chatId);
+        await bot.sendMessage(chatId, 'Mommy đã hủy đơn rồi, con muốn uống món khác thì xem menu nha! 🥰', mainMenuKeyboard());
+        
+      } catch (err) {
+        console.error('Lỗi khi gọi API hủy:', err.message);
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Hủy thất bại, con thử lại nhé!' });
+      }
     }
   });
 
