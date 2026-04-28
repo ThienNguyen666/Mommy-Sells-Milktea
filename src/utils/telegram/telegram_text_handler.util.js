@@ -1,11 +1,14 @@
 const { handleMessage } = require('../../services/order.service');
 const { getOrder, clearOrder } = require('../../services/order.store');
-const { 
-  confirmKeyboard, paymentKeyboard, categoryKeyboard,
-  homeKeyboard, persistentKeyboard
-} 
- = require('../utils/telegram_keyboard_builder.util');
-const { homeText, buildCategoryText, cartText } = require('../utils/telegram_text_builder.util');
+const {
+  confirmKeyboard,
+  paymentKeyboard,
+  categoryKeyboard,
+  homeKeyboard,
+  persistentKeyboard,
+} = require('./telegram_keyboard_builder.util');
+const { homeText, buildCategoryText, cartText } = require('./telegram_text_builder.util');
+const { sendPaymentInfo } = require('./telegram_payment.util');
 
 function normalizeText(text) {
   const map = {
@@ -20,12 +23,10 @@ function normalizeText(text) {
 async function handleTextMessage(chatId, rawText, firstName, bot) {
   const normalized = normalizeText(rawText);
 
-  // Nút persistent keyboard
   if (normalized === 'home') {
-    const msg = await bot.sendMessage(chatId, homeText(firstName), {
+    await bot.sendMessage(chatId, homeText(firstName), {
       parse_mode: 'Markdown',
       ...homeKeyboard(),
-      ...persistentKeyboard(),
     });
     return;
   }
@@ -55,7 +56,7 @@ async function handleTextMessage(chatId, rawText, firstName, bot) {
     return;
   }
 
-  // Xử lý tin nhắn bình thường qua order.service
+  // Xử lý qua order.service
   const reply = await handleMessage(chatId, rawText);
   if (!reply) return;
 
@@ -64,7 +65,6 @@ async function handleTextMessage(chatId, rawText, firstName, bot) {
     return;
   }
 
-  // Chọn keyboard phù hợp với trạng thái đơn
   const order = getOrder(chatId);
   let extraKb = {};
   if (order?.status === 'ask_size_detail') {
@@ -82,7 +82,8 @@ async function handleTextMessage(chatId, rawText, firstName, bot) {
   } else if (order?.status === 'pending') {
     extraKb = confirmKeyboard();
   } else if (order?.status === 'confirmed') {
-    extraKb = paymentKeyboard(null);
+    const payCode = order.orderCode;
+    extraKb = paymentKeyboard(order.paymentData?.checkoutUrl || null, payCode);
   }
 
   await bot.sendMessage(chatId, reply, { parse_mode: 'Markdown', ...extraKb });

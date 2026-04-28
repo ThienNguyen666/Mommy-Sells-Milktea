@@ -50,10 +50,9 @@ async function buildItemListText(categoryName, items, page = 0) {
   text += `━━━━━━━━━━━━━━━━━━━━\n`;
   text += lines.join('\n') + '\n';
   if (totalPages > 1) text += `\n_Trang ${page + 1}/${totalPages}_`;
-  text += `\n\n_Bấm vào món để chọn size và thêm vào đơn:_`;
+  text += `\n\n_Bấm vào tên món để chọn số lượng và size:_`;
   return text;
 }
-
 
 async function buildBestSellersText(bestSellersNames = []) {
   const menu = await getMenu();
@@ -73,7 +72,7 @@ async function buildBestSellersText(bestSellersNames = []) {
   );
 }
 
-function itemDetailText(item) {
+function itemDetailText(item, qty = 1) {
   const name = item.name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   let text = `🧋 *${name}*\n━━━━━━━━━━━━━━━━━━━━\n`;
   if (item.description) text += `_${item.description}_\n\n`;
@@ -83,7 +82,8 @@ function itemDetailText(item) {
     text += `💰 *Size M:* \`${item.priceM.toLocaleString('vi-VN')}đ\`\n`;
     text += `💰 *Size L:* \`${item.priceL.toLocaleString('vi-VN')}đ\`\n`;
   }
-  text += `\nCon muốn size nào nào? 😊`;
+  text += `\n🔢 *Số lượng:* ${qty}\n`;
+  text += `\nChọn size để thêm vào giỏ hàng 😊`;
   return text;
 }
 
@@ -110,5 +110,5 @@ module.exports = {
   buildItemListText,
   buildBestSellersText,
   itemDetailText,
-  cartText
-}
+  cartText,
+};

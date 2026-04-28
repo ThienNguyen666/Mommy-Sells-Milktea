@@ -22,7 +22,8 @@ function calculateTotal(items, menu) {
 function groupItems(items) {
   const grouped = {};
   items.forEach(item => {
-    const key = `${item.name}-${item.size}`;
+    const sizeKey = item.size ? item.size.toUpperCase() : 'NONE';
+    const key = `${item.name}-${sizeKey}`;
     if (grouped[key]) {
       grouped[key].quantity += item.quantity;
     } else {
@@ -59,8 +60,7 @@ function generateVietQR(total, orderId, addInfo) {
 // ========================
 // BUILD PAYMENT RESPONSE
 // Trả về { __type: 'PAYMENT', paymentData, items, total, orderId }
-// để telegram.service.js gọi sendPaymentInfo() với sendPhoto
-// Fallback về string text nếu PayOS fail hoàn toàn (CLI / no bot)
+// telegram.service.js sẽ gọi sendPaymentInfo() với sendPhoto
 // ========================
 async function buildPaymentResponse(chatId, items, total, orderId) {
   let paymentData = null;
@@ -75,43 +75,65 @@ async function buildPaymentResponse(chatId, items, total, orderId) {
       items: payosItems,
       description: `DH${orderId}`,
     });
-    // CreatePaymentLinkResponse: { bin, accountNumber, accountName, amount, description, orderCode, qrCode, checkoutUrl, ... }
-    paymentData = response;
 
-    console.log('PayOS payment created:', { orderCode: response.orderCode, checkoutUrl: response.checkoutUrl });
-    saveOrder(chatId, { 
-          status: 'confirmed', 
-          items, 
-          total, 
-          orderCode: response.orderCode, // Dùng code từ PayOS cho chắc
-          paymentData: response 
-        });  
-    console.log('Đã đồng bộ Store với PayOS cho đơn:', response.orderCode);          
+    paymentData = response;
+    console.log('PayOS payment created:', {
+      orderCode: response.orderCode,
+      checkoutUrl: response.checkoutUrl,
+    });
+
+    // Lưu lại toàn bộ paymentData để dùng lại khi cần
+    saveOrder(chatId, {
+      status: 'confirmed',
+      items,
+      total,
+      orderCode: response.orderCode || orderId,
+      paymentData: response,
+    });
+    console.log('Đã đồng bộ Store với PayOS cho đơn:', response.orderCode || orderId);
   } catch (err) {
     console.log('PayOS không khả dụng, dùng VietQR fallback:', err.message);
   }
 
   if (paymentData) {
-    // Trả object đặc biệt → telegram.service.js xử lý sendPhoto + sendPaymentInfo
     return {
       __type: 'PAYMENT',
       paymentData,
       items,
       total,
-      orderId,
+      orderId: paymentData.orderCode || orderId,
     };
   }
 
-  // Fallback hoàn toàn: text + VietQR URL
-  const qr = generateVietQR(total, orderId);
-  return (
-    `Mommy làm đơn này nha con yêu 💖\n${formatItems(items)}\n` +
-    `💰 Tổng: ${total.toLocaleString('vi-VN')}đ\n\n` +
-    `Nội dung CK: DH${orderId}\n` +
-    `Số TK: ${account} (MB Bank)\n\n` +
-    `Con quét mã này để thanh toán nha 😘\n${qr}\n\n` +
-    `Chuyển khoản xong nhắn "đã chuyển" để mommy xác nhận nha! ✨`
-  );
+  // Fallback hoàn toàn: tạo mock paymentData dùng VietQR
+  // Vẫn trả về object PAYMENT để telegram.service xử lý thống nhất
+  const fallbackPaymentData = {
+    accountNumber: account,
+    accountName: 'TIEM TRA SUA MOMMY',
+    bin: '970422', // MB Bank
+    amount: total,
+    description: `DH${orderId}`,
+    checkoutUrl: null,
+    orderCode: orderId,
+    // Flag để biết đây là fallback
+    _isFallback: true,
+  };
+
+  saveOrder(chatId, {
+    status: 'confirmed',
+    items,
+    total,
+    orderCode: orderId,
+    paymentData: fallbackPaymentData,
+  });
+
+  return {
+    __type: 'PAYMENT',
+    paymentData: fallbackPaymentData,
+    items,
+    total,
+    orderId,
+  };
 }
 
 // ========================
@@ -141,45 +163,29 @@ function parseOrderFallback(text, menu) {
   const unknownItems = [];
   let remainingText = text.toLowerCase().trim();
 
-  // 1. Sắp xếp menu theo độ dài tên món giảm dần
-  // Để tránh việc "Trà Sữa Trân Châu Đen" bị nhận nhầm thành "Trà Sữa"
   const sortedMenu = [...menu].sort((a, b) => b.name.length - a.name.length);
 
-  // 2. Quét toàn bộ menu trong văn bản
   for (const menuItem of sortedMenu) {
     const itemNameLower = menuItem.name.toLowerCase();
-    
-    // Nếu tìm thấy tên món trong câu
     if (remainingText.includes(itemNameLower)) {
-      // Dùng RegExp để tìm tất cả các vị trí món này xuất hiện (tránh sót nếu khách đặt 2 lần cùng 1 món)
       const regex = new RegExp(itemNameLower, 'gi');
       let match;
-      
       while ((match = regex.exec(text.toLowerCase())) !== null) {
-        // Tìm số lượng ở phần văn bản ngay trước tên món
         const beforeText = text.substring(Math.max(0, match.index - 10), match.index).trim();
         const qtyMatch = beforeText.match(/(\d+)/);
         const quantity = qtyMatch ? parseInt(qtyMatch[0], 10) : 1;
-
-        // Tìm size ở phần văn bản ngay sau tên món
-        const afterText = text.substring(match.index + itemNameLower.length, match.index + itemNameLower.length + 10).trim();
+        const afterText = text.substring(
+          match.index + itemNameLower.length,
+          match.index + itemNameLower.length + 10
+        ).trim();
         const size = detectSize(afterText);
-
-        items.push({
-          name: menuItem.name,
-          quantity: quantity,
-          size: size || null
-        });
+        items.push({ name: menuItem.name, quantity, size: size || null });
       }
-      
-      // Xóa món đã tìm được ra khỏi remainingText để sau này tìm unknown cho chính xác
       remainingText = remainingText.split(itemNameLower).join(' ');
     }
   }
 
-  // 3. Xử lý Unknown (Những từ dài mà không phải món trong menu)
   if (items.length === 0) {
-    // Nếu không tìm thấy bất cứ món nào, coi như cả câu là unknown
     unknownItems.push(text);
   }
 
@@ -205,7 +211,7 @@ async function handleMessage(chatId, text) {
     return 'Mommy đã xóa đơn cũ rồi, con nhắn món mới muốn đặt cho mommy nha! 🥰';
   }
 
-  // 2. SAU KHI ĐÃ THANH TOÁN (nhắn "đã chuyển")
+  // 2. SAU KHI ĐÃ XÁC NHẬN — nhắn "đã chuyển" (manual fallback)
   if (currentOrder?.status === 'confirmed') {
     const doneKeywords = ['đã chuyển', 'xong rồi', 'thanh toán rồi', 'ck rồi', 'done', 'rồi mom'];
     if (doneKeywords.some(kw => lowerText.includes(kw))) {
@@ -228,7 +234,7 @@ async function handleMessage(chatId, text) {
     return await buildPaymentResponse(chatId, currentOrder.items, currentOrder.total, orderId);
   }
 
-  // 5. CHỌN SIZE
+  // 5. CHỌN SIZE (từ text message)
   const isSizeInput = detectSize(lowerText);
   if (currentOrder?.status === 'ask_size_detail' && isSizeInput) {
     const size = isSizeInput;
@@ -238,18 +244,19 @@ async function handleMessage(chatId, text) {
     return `Mommy cập nhật size rồi nè:\n${formatItems(items)}\nTổng: ${total.toLocaleString('vi-VN')}đ\n\nCon xác nhận ok nha! ❤️`;
   }
 
-  // 6. XÁC NHẬN ĐƠN → gửi QR ngay luôn
+  // 6. XÁC NHẬN ĐƠN → gửi QR
   if (
     currentOrder?.status === 'pending' &&
     (lowerText.includes('ok') || lowerText.includes('xác nhận') ||
      lowerText === 'có' || lowerText === 'đúng rồi')
   ) {
     const orderId = Date.now();
-    saveOrder(chatId, { ...currentOrder, status: 'confirmed', orderCode: orderId });
-    return await buildPaymentResponse(chatId ,currentOrder.items, currentOrder.total, orderId);
+    // Lưu tạm orderId trước khi tạo payment
+    saveOrder(chatId, { ...currentOrder, status: 'confirming', orderCode: orderId });
+    return await buildPaymentResponse(chatId, currentOrder.items, currentOrder.total, orderId);
   }
 
-  // 7. PARSE ĐƠN BẰNG AI (với fallback khi key hết hạn)
+  // 7. PARSE ĐƠN
   const greetingKeywords = ['đặt đơn mới', 'muốn đặt', 'muốn mua', 'order', 'menu', 'mua trà sữa', 'đặt món'];
   if (greetingKeywords.some(kw => lowerText.includes(kw)) && lowerText.length < 30) {
     if (!currentOrder) {
@@ -265,14 +272,15 @@ async function handleMessage(chatId, text) {
   } catch (err) {
     console.error('AI HẾT HẠN - Mommy chuyển sang quét thủ công!');
     aiAvailable = false;
-    // Truyền cả menu vào để hàm fallback có dữ liệu đối chiếu
-    parsed = parseOrderFallback(lowerText, menu); 
+    parsed = parseOrderFallback(lowerText, menu);
   }
 
-  const items = parsed.items || [];
+  const newItems = parsed.items || [];
   const unknown = parsed.unknownItems || [];
+  const oldItems = currentOrder?.items || [];
+  const allItems = [...oldItems, ...newItems];
 
-  if (items.length === 0 && unknown.length === 0) {
+  if (allItems.length === 0 && unknown.length === 0) {
     if (!currentOrder) {
       if (!aiAvailable) {
         return 'Mommy đang gặp chút sự cố kỹ thuật 😭 Con nhắn tên món cụ thể (ví dụ: "2 trà sữa trân châu L") để mommy làm đơn cho con nha!';
@@ -280,12 +288,12 @@ async function handleMessage(chatId, text) {
       return `Mommy đây! Con xem menu rồi nhắn tên món muốn uống cho mommy nhe! 💖`;
     }
     if (currentOrder.status === 'confirmed') {
-      return 'Con đã chốt đơn rồi nè. Nhắn "đã chuyển" nếu đã CK xong, hoặc "đổi món" để đặt lại nha!';
+      return 'Con đã chốt đơn rồi nè. Hệ thống sẽ tự xác nhận sau khi nhận tiền, hoặc nhắn "đổi món" để đặt lại nha!';
     }
     return undefined;
   }
 
-  if (items.length === 0 && unknown.length > 0) {
+  if (allItems.length === 0 && unknown.length > 0) {
     const filteredUnknown = unknown.filter(u =>
       u.length > 3 && !greetingKeywords.some(kw => u.toLowerCase().includes(kw))
     );
@@ -295,7 +303,7 @@ async function handleMessage(chatId, text) {
     return 'Con nhắn tên món cụ thể kèm số lượng để mommy làm đơn cho chính xác nhe! ✨';
   }
 
-  const mergedItems = groupItems(items);
+  const mergedItems = groupItems(allItems);
   const validUnknown = unknown.filter(u =>
     u.length > 3 && !greetingKeywords.some(kw => u.toLowerCase().includes(kw))
   );

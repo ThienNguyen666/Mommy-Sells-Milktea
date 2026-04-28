@@ -4,51 +4,68 @@ const { handleMessage } = require('./order.service');
 const { getMenu } = require('../utils/menu.util');
 const { getOrder, clearOrder } = require('./order.store');
 
-const { notifyPaymentSuccess, notifyPaymentCancelled, sendPaymentInfo } 
-    = require('../utils/telegram_payment.util');
+const { notifyPaymentSuccess, notifyPaymentCancelled, sendPaymentInfo }
+  = require('../utils/telegram/telegram_payment.util');
 
-const {BANK_BIN_TO_CODE, BANK_NAMES, CATEGORY_CONFIG, BEST_SELLER_NAMES} 
-    = require('../utils/config.util');
+const { CATEGORY_CONFIG, BEST_SELLER_NAMES } = require('../utils/config.util');
 
 const {
   homeKeyboard, itemListKeyboard, itemDetailKeyboard,
   confirmKeyboard, paymentKeyboard, persistentKeyboard,
   categoryKeyboard, bestSellersKeyboard,
-} 
-    = require('../utils/telegram_keyboard_builder.util');
+  decodeItemName,
+} = require('../utils/telegram/telegram_keyboard_builder.util');
 
 const {
   homeText, buildCategoryText, buildItemListText,
-  buildBestSellersText, itemDetailText, cartText
-}
-  = require('../utils/telegram_text_builder.util');
+  buildBestSellersText, itemDetailText, cartText,
+} = require('../utils/telegram/telegram_text_builder.util');
 
-const { safeEdit, safeEditCaption } = require('../utils/telegram_safe_edit.util');
-const { handleTextMessage } = require('../utils/telegram_text_handler.util');
+const { autoSafeEdit, safeEditCaption, safeEdit, safeEditKeyboard }
+  = require('../utils/telegram/telegram_safe_edit.util');
+
+const { handleTextMessage } = require('../utils/telegram/telegram_text_handler.util');
 
 let bot = null;
 
-// In-memory "UI state" cho mỗi user (tách riêng khỏi order state)
-const uiState = new Map(); // chatId → { screen, category, msgId, cartMsgId }
+// In-memory UI state cho mỗi user (tách riêng khỏi order state)
+const uiState = new Map();
 
 function getUI(chatId) {
   if (!uiState.has(chatId)) uiState.set(chatId, {});
   return uiState.get(chatId);
 }
 
+// ==========================================
+// HELPER: Lấy thông tin payment keyboard
+// hiện tại của order (để dùng khi cần)
+// ==========================================
+function getCurrentPaymentKb(order) {
+  const checkoutUrl = order?.paymentData?.checkoutUrl || null;
+  const orderCode = order?.orderCode || null;
+  return paymentKeyboard(checkoutUrl, orderCode);
+}
+
+// ==========================================
+// CALLBACK HANDLER
+// ==========================================
 async function handleCallback(callbackQuery) {
   const chatId = String(callbackQuery.message.chat.id);
   const msgId = callbackQuery.message.message_id;
   const data = callbackQuery.data;
   const ui = getUI(chatId);
+  const msg = callbackQuery.message;
 
   await bot.answerCallbackQuery(callbackQuery.id).catch(() => {});
 
-  // ---------- NAVIGATION ----------
+  // ---- noop ----
+  if (data === 'qty:noop') return;
+
+  // ---- NAVIGATION ----
   if (data === 'nav:home') {
     ui.screen = 'home';
     const firstName = callbackQuery.from?.first_name || 'bạn';
-    await safeEdit(bot, chatId, msgId, homeText(firstName), homeKeyboard());
+    await autoSafeEdit(bot, msg, homeText(firstName), homeKeyboard());
     return;
   }
 
@@ -56,60 +73,60 @@ async function handleCallback(callbackQuery) {
     ui.screen = 'menu';
     const text = await buildCategoryText();
     const kb = await categoryKeyboard();
-    await safeEdit(bot, chatId, msgId, text, kb);
+    await autoSafeEdit(bot, msg, text, kb);
     return;
   }
 
   if (data === 'nav:back') {
-    // quay lại category cũ nếu có
     if (ui.lastCategory) {
       const menu = await getMenu();
       const items = menu.filter(i => i.category === ui.lastCategory);
       const page = ui.lastPage || 0;
       const text = await buildItemListText(ui.lastCategory, items, page);
-      await safeEdit(bot, chatId, msgId, text, itemListKeyboard(items, ui.lastCategory, page));
+      await autoSafeEdit(bot, msg, text, itemListKeyboard(items, ui.lastCategory, page));
     } else {
       const text = await buildCategoryText();
       const kb = await categoryKeyboard();
-      await safeEdit(bot, chatId, msgId, text, kb);
+      await autoSafeEdit(bot, msg, text, kb);
     }
     return;
   }
 
-  // ---------- HOME ----------
+  // ---- HOME ----
   if (data === 'home:menu') {
     ui.screen = 'menu';
     const text = await buildCategoryText();
     const kb = await categoryKeyboard();
-    await safeEdit(bot, chatId, msgId, text, kb);
+    await autoSafeEdit(bot, msg, text, kb);
     return;
   }
 
   if (data === 'home:best') {
-    ui.screen = 'best';
     const menu = await getMenu();
     const text = await buildBestSellersText(BEST_SELLER_NAMES);
-    await safeEdit(bot, chatId, msgId, text, bestSellersKeyboard(menu, BEST_SELLER_NAMES));
+    await autoSafeEdit(bot, msg, text, bestSellersKeyboard(menu, BEST_SELLER_NAMES));
     return;
   }
 
   if (data === 'home:cart') {
     const order = getOrder(chatId);
     const text = cartText(order);
-    const kb = order && order.items?.length > 0 ? confirmKeyboard() : {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '📋 Xem menu', callback_data: 'nav:menu' }],
-          [{ text: '🏠 Home', callback_data: 'nav:home' }],
-        ],
-      },
-    };
-    await safeEdit(bot, chatId, msgId, text, kb);
+    const kb = order && order.items?.length > 0
+      ? confirmKeyboard()
+      : {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📋 Xem menu', callback_data: 'nav:menu' }],
+            [{ text: '🏠 Home', callback_data: 'nav:home' }],
+          ],
+        },
+      };
+    await autoSafeEdit(bot, msg, text, kb);
     return;
   }
 
   if (data === 'home:quick') {
-    await safeEdit(bot, chatId, msgId,
+    await autoSafeEdit(bot, msg,
       `⚡ *ĐẶT NHANH*\n━━━━━━━━━━━━━━━━━━━━\n` +
       `Con chỉ cần nhắn trực tiếp vào chat, ví dụ:\n\n` +
       `_"2 trà sữa trân châu đen L, 1 cà phê sữa M"_\n\n` +
@@ -126,102 +143,124 @@ async function handleCallback(callbackQuery) {
     return;
   }
 
-  // ---------- CATEGORY ----------
+  // ---- CATEGORY ----
   if (data.startsWith('cat:')) {
     const catName = data.slice(4);
-
     if (catName === 'best') {
       const menu = await getMenu();
       const text = await buildBestSellersText(BEST_SELLER_NAMES);
-      await safeEdit(bot, chatId, msgId, text, bestSellersKeyboard(menu, BEST_SELLER_NAMES));
+      await autoSafeEdit(bot, msg, text, bestSellersKeyboard(menu, BEST_SELLER_NAMES));
       return;
     }
-
     const menu = await getMenu();
     const items = menu.filter(i => i.category === catName);
     ui.lastCategory = catName;
     ui.lastPage = 0;
     const text = await buildItemListText(catName, items, 0);
-    await safeEdit(bot, chatId, msgId, text, itemListKeyboard(items, catName, 0));
+    await autoSafeEdit(bot, msg, text, itemListKeyboard(items, catName, 0));
     return;
   }
 
-  // ---------- PAGINATION ----------
+  // ---- PAGINATION ----
   if (data.startsWith('page:')) {
-    const [, catName, pageStr] = data.split(':');
-    const page = parseInt(pageStr, 10);
+    const parts = data.split(':');
+    const catName = parts[1];
+    const page = parseInt(parts[2], 10);
     const menu = await getMenu();
     const items = menu.filter(i => i.category === catName);
     ui.lastCategory = catName;
     ui.lastPage = page;
     const text = await buildItemListText(catName, items, page);
-    await safeEdit(bot, chatId, msgId, text, itemListKeyboard(items, catName, page));
+    await autoSafeEdit(bot, msg, text, itemListKeyboard(items, catName, page));
     return;
   }
 
-  // ---------- ITEM DETAIL ----------
+  // ---- ITEM DETAIL ----
   if (data.startsWith('item:')) {
-    const itemName = data.slice(5);
+    const itemName = data.slice(5); // tên thật, không encode
     const menu = await getMenu();
     const item = menu.find(i => i.name === itemName);
     if (!item) return;
     ui.lastItem = itemName;
-    const text = itemDetailText(item);
-    await safeEdit(bot, chatId, msgId, text, itemDetailKeyboard(itemName));
+    ui.lastQty = 1; // reset qty khi mở detail món mới
+    const text = itemDetailText(item, 1);
+    await autoSafeEdit(bot, msg, text, itemDetailKeyboard(itemName, 1));
     return;
   }
 
-  // ---------- SIZE SELECTION ----------
-  if (data.startsWith('size:')) {
-    const [, size, ...nameParts] = data.split(':');
-    const itemName = nameParts.join(':');
+  // ---- QUANTITY ADJUST ----
+  if (data.startsWith('qty:')) {
+    const parts = data.split(':');
+    const action = parts[1]; // inc | dec
+    const encodedName = parts[2];
+    const currentQty = parseInt(parts[3], 10) || 1;
+    const itemName = decodeItemName(encodedName);
 
-    // Gửi tới handleMessage như gõ trực tiếp: "1 <item> size <L/M>"
-    const fakeMsg = `1 ${itemName} size ${size}`;
+    let newQty = action === 'inc' ? currentQty + 1 : Math.max(1, currentQty - 1);
+    ui.lastQty = newQty;
+
+    const menu = await getMenu();
+    const item = menu.find(i => i.name === itemName);
+    if (!item) return;
+
+    const text = itemDetailText(item, newQty);
+    await autoSafeEdit(bot, msg, text, itemDetailKeyboard(itemName, newQty));
+    return;
+  }
+
+  // ---- ADD ITEM TO CART (từ inline keyboard) ----
+  if (data.startsWith('additem:')) {
+    // format: additem:<size>:<encodedName>:<qty>
+    const parts = data.split(':');
+    const size = parts[1]; // M hoặc L
+    const qty = parseInt(parts[parts.length - 1], 10) || 1;
+    // encodedName có thể chứa ':' đã encode, join lại
+    const encodedName = parts.slice(2, parts.length - 1).join(':');
+    const itemName = decodeItemName(encodedName);
+
+    // Gọi handleMessage như đặt hàng thực tế
+    const fakeMsg = `${qty} ${itemName} size ${size}`;
     const reply = await handleMessage(chatId, fakeMsg);
 
     if (!reply) return;
 
     if (typeof reply === 'object' && reply.__type === 'PAYMENT') {
+      // Xóa tin nhắn item detail, gửi QR mới
       await bot.deleteMessage(chatId, msgId).catch(() => {});
       await sendPaymentInfo(chatId, reply.paymentData, reply.items, reply.total, reply.orderId, bot);
       return;
     }
 
     const order = getOrder(chatId);
-    const status = order?.status;
+    const cartTxt = cartText(order) + `\n\n✅ Đã thêm: *${itemName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}* (${size}) x${qty}`;
 
-    if (status === 'ask_size_detail') {
-      await safeEdit(bot, chatId, msgId, reply, {
-        reply_markup: itemDetailKeyboard(ui.lastItem || itemName).reply_markup,
-      });
-    } else if (status === 'pending') {
-      // Hiện cart để xác nhận
-      const cartTxt = cartText(order) + '\n\n' + reply;
-      await safeEdit(bot, chatId, msgId, cartTxt, confirmKeyboard());
+    if (order?.status === 'pending') {
+      await autoSafeEdit(bot, msg, cartTxt, confirmKeyboard());
     } else {
-      await safeEdit(bot, chatId, msgId, reply, confirmKeyboard());
+      await autoSafeEdit(bot, msg, cartTxt, confirmKeyboard());
     }
     return;
   }
 
-  // ---------- ORDER ----------
+  // ---- ORDER ----
   if (data === 'order:confirm') {
     const reply = await handleMessage(chatId, 'ok');
     if (!reply) return;
 
     if (typeof reply === 'object' && reply.__type === 'PAYMENT') {
+      // Xóa tin nhắn cũ, gửi ảnh QR mới
       await bot.deleteMessage(chatId, msgId).catch(() => {});
       await sendPaymentInfo(chatId, reply.paymentData, reply.items, reply.total, reply.orderId, bot);
       return;
     }
-    await safeEdit(bot, chatId, msgId, reply, paymentKeyboard(null));
+
+    await autoSafeEdit(bot, msg, reply, paymentKeyboard(null));
     return;
   }
 
   if (data === 'order:reset') {
     clearOrder(chatId);
-    await safeEdit(bot, chatId, msgId,
+    await autoSafeEdit(bot, msg,
       `🔄 *Đã xóa đơn cũ!*\n\nCon nhắn món mới cho mommy nhe 😊`,
       {
         reply_markup: {
@@ -235,60 +274,73 @@ async function handleCallback(callbackQuery) {
     return;
   }
 
-  // ---------- PAYMENT ----------
-  if (data === 'payment:done') {
+  // ---- PAYMENT: HỦY ----
+  // format: payment:cancel hoặc payment:cancel:<orderCode>
+  if (data.startsWith('payment:cancel')) {
+    const parts = data.split(':');
+    const orderCodeFromBtn = parts[2] || null;
+
+    // Lấy orderCode từ button data hoặc từ store
+    const currentOrder = getOrder(chatId);
+    const orderCode = orderCodeFromBtn || currentOrder?.orderCode;
+
+    // Xóa đơn trong store trước
     clearOrder(chatId);
-    await safeEdit(bot, chatId, msgId,
-      `✅ *Mommy đã nhận được thông báo!*\n\nĐợi mommy check rồi làm đồ cho con ngay nhe 🧋💖`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🏠 Về Home', callback_data: 'nav:home' }],
-          ],
-        },
+
+    // Gọi PayOS cancel API nếu có orderCode và PayOS được cấu hình
+    if (orderCode && process.env.PAYOS_CLIENT_ID) {
+      try {
+        const { cancelPayOSPayment } = require('./payos.service');
+        await cancelPayOSPayment(orderCode);
+        console.log(`✅ Đã hủy PayOS link cho đơn #${orderCode}`);
+      } catch (err) {
+        console.error(`❌ Lỗi hủy PayOS đơn #${orderCode}:`, err.message);
+        // Vẫn tiếp tục — đã xóa order local, chỉ log lỗi PayOS
       }
-    );
+    }
+
+    const cancelText =
+      `❌ *Đơn hàng đã hủy*\n\n` +
+      (orderCode ? `Đơn #DH${orderCode} đã được hủy.\n` : '') +
+      `Khi nào thèm lại cứ nhắn mommy nhe! 🥰`;
+
+    const homeKb = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📋 Đặt món mới', callback_data: 'nav:menu' }],
+          [{ text: '🏠 Home', callback_data: 'nav:home' }],
+        ],
+      },
+    };
+
+    // Message payment là ảnh → phải dùng editCaption
+    // Message text → dùng editText
+    // autoSafeEdit tự detect
+    await autoSafeEdit(bot, msg, cancelText, homeKb);
     return;
   }
 
-  if (data === 'payment:cancel' || data.startsWith('cancel_')) {
-    const orderId = data.startsWith('cancel_') ? data.replace('cancel_', '') : null;
+  // ---- PAYMENT: ĐÃ DONE (webhook tự xử lý, đây là fallback manual) ----
+  // Giữ lại phòng trường hợp webhook fail
+  if (data === 'payment:done') {
     clearOrder(chatId);
-    try {
-      if (orderId) {
-        const { cancelPayOSPayment } = require('./payos.service');
-        await cancelPayOSPayment(orderId);
-      }
-    } catch(err) {
-      console.error("Error canceling PayOS payment:", err.message);
-      return;
-    }
+    const doneText =
+      `✅ *Mommy đã nhận được thông báo!*\n\n` +
+      `Đợi mommy check rồi làm đồ cho con ngay nhe 🧋💖\n\n` +
+      `_Nếu hệ thống chưa xác nhận tự động, mommy sẽ liên hệ con sau nhé!_`;
 
-    await safeEditCaption(bot, chatId, msgId,
-      `❌ *Đơn hàng đã hủy*\n\nMommy đã hủy đơn này. Khi nào thèm lại cứ nhắn mommy nhe! 🥰`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🏠 Home', callback_data: 'nav:home' }],
-          ],
-        },
-      }
-    ).catch(async () => {
-      await safeEdit(bot, chatId, msgId,
-        `❌ *Đơn hàng đã hủy*\n\nMommy đã hủy đơn này. Khi nào thèm lại cứ nhắn mommy nhe! 🥰`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🏠 Home', callback_data: 'nav:home' }],
-            ],
-          },
-        }
-      );
+    await autoSafeEdit(bot, msg, doneText, {
+      reply_markup: {
+        inline_keyboard: [[{ text: '🏠 Về Home', callback_data: 'nav:home' }]],
+      },
     });
     return;
   }
 }
 
+// ==========================================
+// START BOT
+// ==========================================
 function startBot() {
   const token = process.env.BOT_TOKEN;
   if (!token) {
@@ -305,13 +357,11 @@ function startBot() {
     const firstName = msg.from?.first_name || 'bạn';
     clearOrder(chatId);
 
-    // Gửi home + persistent keyboard
     await bot.sendMessage(chatId,
       `Chào mừng ${firstName}! Mình gắn menu phím tắt bên dưới cho con nhe 👇`,
       { reply_markup: persistentKeyboard().reply_markup }
     );
 
-    // Gửi home inline
     await bot.sendMessage(chatId, homeText(firstName), {
       parse_mode: 'Markdown',
       ...homeKeyboard(),
@@ -372,7 +422,7 @@ function startBot() {
     }
   });
 
-  // Callback queries (inline buttons)
+  // Callback queries
   bot.on('callback_query', async (cq) => {
     try {
       await handleCallback(cq);
@@ -392,8 +442,8 @@ function startBot() {
   return bot;
 }
 
-function getBot() { 
-  return bot; 
+function getBot() {
+  return bot;
 }
 
 module.exports = {

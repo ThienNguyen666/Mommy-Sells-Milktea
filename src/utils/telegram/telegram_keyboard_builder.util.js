@@ -20,7 +20,7 @@ function homeKeyboard() {
 }
 
 /** Tầng 2: Chọn category */
-async function categoryKeyboard(showViewAll = false) {
+async function categoryKeyboard() {
   const menu = await getMenu();
   const cats = [...new Set(menu.map(i => i.category).filter(Boolean))];
 
@@ -29,12 +29,8 @@ async function categoryKeyboard(showViewAll = false) {
     return [{ text: `${cfg.emoji} ${cat}`, callback_data: `cat:${cat}` }];
   });
 
-  rows.push([
-    { text: '⭐ Best Sellers', callback_data: 'cat:best' },
-  ]);
-  rows.push([
-    { text: '🔙 Quay lại', callback_data: 'nav:home' },
-  ]);
+  rows.push([{ text: '⭐ Best Sellers', callback_data: 'cat:best' }]);
+  rows.push([{ text: '🔙 Quay lại', callback_data: 'nav:home' }]);
 
   return { reply_markup: { inline_keyboard: rows } };
 }
@@ -57,7 +53,6 @@ function itemListKeyboard(items, categoryName, page = 0) {
     }];
   });
 
-  // Nút phân trang
   const paginationRow = [];
   if (page > 0) paginationRow.push({ text: '◀ Trước', callback_data: `page:${categoryName}:${page - 1}` });
   if (page < totalPages - 1) paginationRow.push({ text: 'Sau ▶', callback_data: `page:${categoryName}:${page + 1}` });
@@ -71,18 +66,31 @@ function itemListKeyboard(items, categoryName, page = 0) {
   return { reply_markup: { inline_keyboard: rows } };
 }
 
-/** Item detail: chọn size */
-function itemDetailKeyboard(itemName) {
+/**
+ * Item detail: chọn size + quantity
+ * qty mặc định = 1, có thể tăng/giảm
+ */
+function itemDetailKeyboard(itemName, qty = 1) {
+  // Encode tên món để tránh conflict với dấu ':'
+  const encodedName = encodeItemName(itemName);
   return {
     reply_markup: {
       inline_keyboard: [
+        // Dòng 1: Điều chỉnh số lượng
         [
-          { text: '🥤 Size M', callback_data: `size:M:${itemName}` },
-          { text: '🧋 Size L', callback_data: `size:L:${itemName}` },
+          { text: '➖', callback_data: `qty:dec:${encodedName}:${qty}` },
+          { text: `${qty} cái`, callback_data: `qty:noop` },
+          { text: '➕', callback_data: `qty:inc:${encodedName}:${qty}` },
         ],
+        // Dòng 2: Chọn size → thêm vào giỏ
+        [
+          { text: `🥤 Thêm Size M`, callback_data: `additem:M:${encodedName}:${qty}` },
+          { text: `🧋 Thêm Size L`, callback_data: `additem:L:${encodedName}:${qty}` },
+        ],
+        // Dòng 3: Điều hướng
         [
           { text: '🔙 Quay lại', callback_data: 'nav:back' },
-          { text: '🏠 Home', callback_data: 'nav:home' },
+          { text: '🛒 Giỏ hàng', callback_data: 'home:cart' },
         ],
       ],
     },
@@ -98,22 +106,27 @@ function confirmKeyboard() {
           { text: '✅ Xác nhận đặt', callback_data: 'order:confirm' },
           { text: '✏️ Đổi món', callback_data: 'order:reset' },
         ],
-        [{ text: '🏠 Home', callback_data: 'nav:home' }],
+        [
+          { text: '📋 Thêm món', callback_data: 'nav:menu' },
+          { text: '🏠 Home', callback_data: 'nav:home' },
+        ],
       ],
     },
   };
 }
 
-/** Payment keyboard */
-function paymentKeyboard(checkoutUrl) {
+/**
+ * Payment keyboard — CHỈ có PayOS link + Hủy đơn
+ * Bỏ nút "Đã chuyển khoản" vì webhook tự động xác nhận
+ */
+function paymentKeyboard(checkoutUrl, orderCode) {
   const rows = [];
   if (checkoutUrl) {
     rows.push([{ text: '💳 Thanh toán qua PayOS', url: checkoutUrl }]);
   }
-  rows.push([
-    { text: '✅ Đã chuyển khoản', callback_data: 'payment:done' },
-    { text: '❌ Hủy đơn', callback_data: 'payment:cancel' },
-  ]);
+  // Nút hủy đơn — truyền kèm orderCode để có thể gọi cancel API
+  const cancelData = orderCode ? `payment:cancel:${orderCode}` : 'payment:cancel';
+  rows.push([{ text: '❌ Hủy đơn', callback_data: cancelData }]);
   rows.push([{ text: '🏠 Home', callback_data: 'nav:home' }]);
   return { reply_markup: { inline_keyboard: rows } };
 }
@@ -137,8 +150,8 @@ function bestSellersKeyboard(menu, bestSellersNames = []) {
   const rows = bests.map(item => {
     const name = item.name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
     const priceTag = item.priceM === item.priceL
-      ? `${(item.priceM/1000).toFixed(0)}k`
-      : `${(item.priceM/1000).toFixed(0)}k / ${(item.priceL/1000).toFixed(0)}k`;
+      ? `${(item.priceM / 1000).toFixed(0)}k`
+      : `${(item.priceM / 1000).toFixed(0)}k / ${(item.priceL / 1000).toFixed(0)}k`;
     return [{ text: `${name} — ${priceTag}`, callback_data: `item:${item.name}` }];
   });
   rows.push([
@@ -146,6 +159,19 @@ function bestSellersKeyboard(menu, bestSellersNames = []) {
     { text: '🏠 Home', callback_data: 'nav:home' },
   ]);
   return { reply_markup: { inline_keyboard: rows } };
+}
+
+/**
+ * Encode tên món thành dạng an toàn cho callback_data
+ * Telegram giới hạn callback_data <= 64 bytes
+ */
+function encodeItemName(name) {
+  // Thay dấu cách bằng underscore, bỏ ký tự đặc biệt
+  return name.replace(/:/g, '__COLON__').replace(/\s+/g, '_');
+}
+
+function decodeItemName(encoded) {
+  return encoded.replace(/__COLON__/g, ':').replace(/_/g, ' ');
 }
 
 module.exports = {
@@ -157,4 +183,6 @@ module.exports = {
   persistentKeyboard,
   categoryKeyboard,
   bestSellersKeyboard,
+  encodeItemName,
+  decodeItemName,
 };
