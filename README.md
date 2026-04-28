@@ -28,7 +28,6 @@ src/
 ├── services/
 │   ├── ai.service.js               # OpenAI: parse đơn từ text tự nhiên
 │   ├── chat.service.js             # OpenAI: rewrite reply theo persona mommy
-│   ├── menu.service.js             # Load + cache menu từ CSV
 │   ├── order.service.js            # Core logic: state machine đơn hàng
 │   ├── order.store.js              # In-memory store: chatId ↔ order state
 │   ├── payos.service.js            # PayOS: tạo link, hủy link, verify webhook
@@ -36,7 +35,14 @@ src/
 ├── routes/
 │   └── payos.webhook.route.js      # POST /payos/webhook — xác nhận thanh toán
 ├── utils/
+|   ├── telegram/                   # Các file phụ trợ telegram
+|       ├── telegram_keyboard_builder.util.js
+|       ├── telegram_text_builder.util.js
+|       ├── telegram_text_handler.util.js
+|       ├── telegram_payment.util.js
+|       ├── telegram_safe_edit.util.js
 │   ├── csv.util.js                 # Đọc CSV → JSON
+|   |── menu.util.js                # Load + cache menu từ CSV
 │   ├── prompt.util.js              # Load persona.txt
 │   └── save_orders.util.js         # Ghi đơn ra file JSON (optional logging)
 ├── prompt/
@@ -95,7 +101,7 @@ Khách nhắn hoặc bấm nút
 [Done]  Webhook → Bot notify tự động ✅
 ```
 
-Ngoài flow trên, khách **vẫn có thể nhắn text trực tiếp** bất cứ lúc nào:
+Ngoài flow trên, khách vẫn có thể nhắn text trực tiếp bất cứ lúc nào:
 
 ```
 "2 trà sữa trân châu đen L, 1 cà phê sữa M"
