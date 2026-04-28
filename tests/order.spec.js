@@ -25,7 +25,8 @@ jest.mock('../src/services/payos.service', () => ({
 const { parseOrder } = require('../src/services/ai.service');
 const { handleMessage } = require('../src/services/order.service');
 const { clearOrder } = require('../src/services/order.store');
-const { getMenu } = require('../src/services/menu.service');
+
+const { getMenu } = require('../src/utils/menu.util');
 
 beforeEach(() => {
   for (let i = 1; i <= 25; i++) {
@@ -51,7 +52,11 @@ describe("Order Bot", () => {
     expect(res1).toMatch(/45/);
 
     const res2 = await handleMessage(chatId, "ok");
-    expect(res2).toMatch(/DH/);
+    expect(res2).toMatchObject({
+        __type: "PAYMENT",
+        total: 45000
+    });
+
   });
 
   // ======================
@@ -231,7 +236,9 @@ describe("Order Bot", () => {
     await handleMessage(chatId, "ok");
     const res = await handleMessage(chatId, "thanh toán");
 
-    expect(res).toMatch(/DH/);
+    expect(res.__type).toBe("PAYMENT");
+    expect(res.orderId).toBeDefined(); // Kiểm tra có orderId là được
+    expect(res.paymentData.checkoutUrl).toContain("payos.test");
   });
 
   // ======================

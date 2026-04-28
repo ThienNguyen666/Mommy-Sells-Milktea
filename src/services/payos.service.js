@@ -57,13 +57,12 @@ async function createPayOSPayment({ orderCode, amount, items, description }) {
   });
 }
 
-// Trong services/payos.service.js
 async function cancelPayOSPayment(orderCode) {
   try {
-    // Nếu con dùng thư viện @payos/node:
+    // Nếu dùng thư viện @payos/node:
     // return await payos.cancelPaymentLink(orderCode, 'Khách hàng tự hủy trên Telegram');
     
-    // Hoặc nếu con dùng axios gọi API:
+    // Hoặc nếu dùng axios gọi API:
     const axios = require('axios');
     const response = await axios.post(
       `https://api-merchant.payos.vn/v2/payment-requests/${orderCode}/cancel`,

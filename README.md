@@ -1,327 +1,275 @@
-# 🍵 Mommy Bán Trà Sữa - AI Chatbot Order Management System
+# 🍵 Mommy Bán Trà Sữa — AI Chatbot Order Management System
 
-> An intelligent AI-powered chatbot system for automating milk tea shop orders on Telegram
+> Bot Telegram AI cho tiệm trà sữa: đặt món bằng ngôn ngữ tự nhiên, menu 3 tầng progressive disclosure, thanh toán VietQR + PayOS tự động.
 
-## Project Overview
+---
 
-This project implements an AI-powered chatbot that operates as a virtual shop assistant for a milk tea (trà sữa) shop. The bot communicates with customers on Telegram, helps them place orders, calculates prices, and facilitates payment through VietQR and PayOS integration.
+## Tổng quan dự án
 
-### Key Features
+Hệ thống chatbot AI cho phép khách hàng đặt đồ uống tại tiệm trà sữa hoàn toàn qua Telegram. Bot hiểu tiếng Việt tự nhiên, xử lý đơn hàng, tính tiền và phát sinh QR thanh toán tự động.
 
-- **AI-Powered Conversation**: Uses OpenAI (GPT-4 mini) to understand customer messages and generate natural responses
-- **Telegram Integration**: Full Telegram bot support with polling-based message handling
-- **Smart Order Management**: 
-  - Parse customer orders from natural language
-  - Ask for missing information (size preferences)
-  - Confirm order details before payment
-  - Calculate totals automatically
-- **Payment Integration**: 
-  - VietQR QR code generation for bank transfers
-  - PayOS integration for payment verification (optional)
-  - Order confirmation on payment completion
-- **Menu Management**: CSV-based menu with categories, prices, and availability
-- **Order Tracking**: In-memory state management for customer conversations
-- **Comprehensive Testing**: Unit tests for order flow and AI integration
+### Tính năng chính
 
-## Architecture
+- **Menu 3 tầng Progressive Disclosure** — Home → Category → Item Detail, edit message tại chỗ, không spam chat
+- **Inline keyboard thuần túy** — toàn bộ điều hướng bằng nút bấm, persistent keyboard làm phím tắt
+- **AI parse đơn hàng** — OpenAI GPT-4o-mini hiểu ngôn ngữ tự nhiên, typo, hỗn hợp tiếng Anh/Việt; có fallback fuzzy matching khi AI không khả dụng
+- **Thanh toán tự động** — VietQR + PayOS, xác nhận qua webhook, không cần gửi ảnh chụp màn hình
+- **State machine đơn hàng** — `null` → `ask_size_detail` → `pending` → `confirmed` → `paid`
+- **Best Sellers** — gợi ý món phổ biến, giảm thời gian chọn cho khách quen
+
+---
+
+## Kiến trúc
 
 ```
 src/
-├── app.js                          # Express server & Telegram bot init
-├── cli.js                          # CLI interface for testing
+├── app.js                          # Express server + khởi động bot
+├── cli.js                          # CLI mode để test không cần Telegram
 ├── services/
-│   ├── ai.service.js              # OpenAI integration for order parsing
-│   ├── chat.service.js            # Reply generation with persona
-│   ├── menu.service.js            # Menu loading & caching
-│   ├── order.service.js           # Core order flow logic
-│   ├── order.store.js             # Order state storage
-│   ├── payos.service.js           # PayOS payment integration
-│   └── telegram.service.js        # Telegram bot setup & handlers
+│   ├── ai.service.js               # OpenAI: parse đơn từ text tự nhiên
+│   ├── chat.service.js             # OpenAI: rewrite reply theo persona mommy
+│   ├── menu.service.js             # Load + cache menu từ CSV
+│   ├── order.service.js            # Core logic: state machine đơn hàng
+│   ├── order.store.js              # In-memory store: chatId ↔ order state
+│   ├── payos.service.js            # PayOS: tạo link, hủy link, verify webhook
+│   └── telegram.service.js         # Bot: progressive menu, callback router, notify
 ├── routes/
-│   └── payos.webhook.route.js     # Webhook for payment confirmation
+│   └── payos.webhook.route.js      # POST /payos/webhook — xác nhận thanh toán
 ├── utils/
-│   ├── csv.util.js                # CSV reading utility
-│   ├── prompt.util.js             # Persona loading
-│   └── save_orders.util.js        # Order persistence
+│   ├── csv.util.js                 # Đọc CSV → JSON
+│   ├── prompt.util.js              # Load persona.txt
+│   └── save_orders.util.js         # Ghi đơn ra file JSON (optional logging)
 ├── prompt/
-│   └── persona.txt                # AI personality definition
-├── public/
-│   └── script.js           
-│   └── index.html          
-│   └── style.css
-└── Menu.csv                       # Menu database
+│   └── persona.txt                 # Persona: "Mommy bán trà sữa" — giọng dễ thương
+└── Menu.csv                        # Database menu: category, name, price M/L, available
 ```
 
-## 🚀 Getting Started
+---
 
-### Prerequisites
+## Menu Progressive Disclosure — 3 tầng
 
-- Node.js 18+ 
-- npm or yarn
-- OpenAI API key (provided by the company)
-- Telegram Bot Token (from @BotFather)
-- (Optional) PayOS credentials
+### Tầng 1: Home
+4 nút chính, cực gọn:
 
-### Installation
+| Nút | Hành động |
+|---|---|
+| 📋 Xem menu | Mở danh mục |
+| ⭐ Best sellers | Top món được order nhiều nhất |
+| 🛒 Giỏ hàng | Xem + xác nhận đơn hiện tại |
+| ⚡ Đặt nhanh | Hướng dẫn nhắn trực tiếp |
+
+### Tầng 2: Danh mục
+Mỗi category 1 nút, edit message tại chỗ, không tạo tin nhắn mới:
+
+- 🧋 Trà Sữa  
+- 🍓 Trà Trái Cây  
+- ☕ Cà Phê  
+- 🧊 Đá Xay  
+- ✨ Topping  
+- ⭐ Best Sellers  
+
+### Tầng 3: Danh sách món
+- Tối đa 5 món/trang, phân trang bằng nút ◀ / ▶
+- Format: `Tên Món — 35k / 45k`
+- Bấm vào món → mở Item Detail với nút chọn **Size M / Size L**
+
+---
+
+## Flow đặt hàng
+
+```
+Khách nhắn hoặc bấm nút
+        ↓
+[Tầng 1] Home — 4 nút
+        ↓ Xem menu
+[Tầng 2] Chọn category
+        ↓ Bấm category
+[Tầng 3] Danh sách món (5/trang)
+        ↓ Bấm tên món
+[Detail] Hiện mô tả + chọn size M/L
+        ↓ Bấm size
+[Order] AI thêm vào đơn, hiện giỏ hàng
+        ↓ Xác nhận
+[QR]    Ảnh VietQR + nút PayOS + nút Hủy
+        ↓ Quét + chuyển khoản
+[Done]  Webhook → Bot notify tự động ✅
+```
+
+Ngoài flow trên, khách **vẫn có thể nhắn text trực tiếp** bất cứ lúc nào:
+
+```
+"2 trà sữa trân châu đen L, 1 cà phê sữa M"
+```
+
+Bot dùng AI parse → tạo đơn → hỏi confirm, không bắt buộc phải dùng menu.
+
+---
+
+## Cài đặt & Chạy
+
+### Yêu cầu
+
+- Node.js 18+
+- OpenAI API key
+- Telegram Bot Token (từ @BotFather)
+- (Tuỳ chọn) Tài khoản PayOS
+
+### Cài đặt
 
 ```bash
-# Clone the repository
 git clone <repo-url>
 cd Mommy-ban-tra-sua
-
-# Install dependencies
 npm install
-
-# Create .env file
-cp .env.example .env
-
-# Edit .env with your credentials
-nano .env
+cp .env.example .env   # hoặc tạo .env thủ công
 ```
 
-### Environment Variables
+### Biến môi trường
 
 ```env
-# Telegram Configuration
+# Bắt buộc
 BOT_TOKEN=your_telegram_bot_token
-
-# OpenAI Configuration
 OPENAI_API_KEY=your_openai_api_key
+ACCOUNT=0999999999          # Số TK ngân hàng nhận tiền (MB Bank mặc định)
 
-# Bank Account (for VietQR)
-ACCOUNT=0999999999
-
-# PayOS Integration (Optional)
-PAYOS_CLIENT_ID=your_payos_client_id
-PAYOS_API_KEY=your_payos_api_key
-PAYOS_CHECKSUM_KEY=your_payos_checksum_key
+# Tuỳ chọn — PayOS
+PAYOS_CLIENT_ID=...
+PAYOS_API_KEY=...
+PAYOS_CHECKSUM_KEY=...
 APP_URL=https://your-domain.com
 PAYOS_RETURN_URL=https://your-domain.com/payos/return
 PAYOS_CANCEL_URL=https://your-domain.com/payos/cancel
 
-# Server Configuration
+# Server
 PORT=4300
 ```
 
-## Usage
+### Chạy
 
-### Run Telegram Bot
 ```bash
+# Production (Telegram bot + Express server)
 npm start
-```
-Bot will start polling Telegram for messages and be ready to serve customers.
 
-### CLI Testing Mode
-```bash
+# Development CLI (test không cần Telegram)
 npm run start:cli
+
+# Tests
+npm test           # Order flow tests (mocked AI)
+npm run test:ai    # AI integration tests (cần OPENAI_API_KEY)
+npm run test:all   # Tất cả
 ```
-Interact with the bot directly in the terminal (great for development/testing).
-
-### Run Tests
-```bash
-# Run order tests
-npm test
-
-# Run AI integration tests
-npm run test:ai
-
-# Run all tests
-npm run test:all
-```
-
-## 💬 How It Works
-
-### Customer Conversation Flow
-
-```
-Step 1: Customer sends order
-   Input: "2 trà sữa trân châu đen size L"
-   
-Step 2: AI parses order
-   - Extracts: 2x Trà sữa trân châu đen, Size L
-   - Validates against menu
-   
-Step 3: Bot asks for missing info (if needed)
-   - If size not specified: "size M hay L nè con?"
-   
-Step 4: Customer confirms order
-   - Input: "ok" or "xác nhận"
-   - Bot displays: Order summary + Total price
-   
-Step 5: Payment
-   - Input: "thanh toán" or "chuyển khoản"
-   - Bot generates VietQR code
-   - Displays bank info & transfer content
-   
-Step 6: Order completion
-   - After payment confirmation
-   - Bot ready for new order
-```
-
-### Menu Structure
-
-The menu is stored in `Menu.csv` with the following structure:
-
-| Category | Item ID | Name | Description | Price M | Price L | Available |
-|----------|---------|------|-------------|---------|---------|-----------|
-| Trà Sữa | TS01 | Trà Sữa Trân Châu Đen | ... | 35000 | 45000 | true |
-
-Categories include:
-- **Trà Sữa** - Milk Tea
-- **Trà Trái Cây** - Fruit Tea  
-- **Cà Phê** - Coffee
-- **Đá Xay** - Shaved Ice
-- **Topping** - Additional toppings
-
-## AI Integration
-
-### Order Parsing (ai.service.js)
-- Uses OpenAI GPT-4 mini model
-- Temperature: 0.2 (deterministic)
-- Extracts: item names, quantities, sizes
-- Validates menu items
-
-### Reply Generation (chat.service.js)
-- Persona-based responses
-- Temperature: 0.6 (creative but consistent)
-- Preserves order info & prices
-- Adds natural, friendly touch
-
-### Persona
-The bot acts as a friendly mother selling milk tea, with natural Vietnamese communication style.
-
-## Payment System
-
-### VietQR Integration
-- Generates QR codes for bank transfers
-- Format: `https://img.vietqr.io/image/MB-{ACCOUNT}-compact.png?amount={AMOUNT}&addInfo={ORDER_ID}`
-- Customers scan QR and transfer
-- Transfer content: `DH{ORDER_ID}` for tracking
-
-### PayOS Integration (Optional)
-- Creates payment requests with order details
-- Handles payment webhooks
-- Marks orders as paid in system
-- Fallback to VietQR if PayOS unavailable
-
-## Testing
-
-The project includes comprehensive tests:
-
-### Order Flow Tests (`tests/order.spec.js`)
-- Basic order flow
-- Size handling (missing, partial, all)
-- Multiple items
-- Price calculations
-- State transitions
-
-### AI Tests (`tests/ai.spec.js`)
-- Order parsing
-- Handling typos
-- Menu validation
-
-## Troubleshooting
-
-### Bot not responding to Telegram messages
-- Check `BOT_TOKEN` is correct
-- Ensure bot has webhook/polling enabled
-- Check internet connection
-
-### OpenAI API errors
-- Verify `OPENAI_API_KEY` is valid
-- Check API key has credit
-- Monitor API usage
-
-### Menu loading issues
-- Ensure `Menu.csv` exists in `src/` directory
-- Verify CSV format matches template
-
-### Payment QR not showing
-- Check `ACCOUNT` environment variable is set
-- Verify image URL is accessible
-
-## Project Structure Notes
-
-### State Management
-- Currently uses in-memory `userState` map
-- Per-customer conversation state tracking
-- States: `null`, `ask_size_detail`, `pending`, `confirmed`
-
-### Order Storage
-- `order.store.js`: Maintains order history by chatID and orderCode
-- `markOrderPaid()`: Updates order status on payment
-- Useful for admin dashboard/reporting
-
-### Error Handling
-- Graceful fallback to raw messages if AI fails
-- Try-catch on all async operations
-- Input validation (length, format)
-
-## Alignment with Company Requirements
-
- **Uses Large Language Models**: OpenAI GPT-4 mini  
- **Customer Communication**: Full Telegram bot integration  
- **Order Support**: Natural language parsing & confirmation  
- **Price Calculation**: Automatic total computation  
- **Payment Integration**: VietQR + PayOS support  
- **Order Summary**: Formatted output for preparation & delivery  
- **Understandable Code**: Well-documented with clear structure  
- **Production Ready**: Error handling, testing, logging  
-
-## Deployment
-
-### Local Testing
-```bash
-npm start
-```
-
-### Production Deployment (Suggested)
-
-1. **Railway/Render/Heroku**:
-   ```bash
-   # Set environment variables in platform
-   # Deploy main branch
-   npm start
-   ```
-
-2. **VPS (Ubuntu)**:
-   ```bash
-   # Install Node.js
-   curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-   sudo apt-get install -y nodejs
-   
-   # Clone and setup
-   git clone <repo>
-   cd Mommy-ban-tra-sua
-   npm install
-   npm start
-   ```
-
-3. **Docker**:
-   ```bash
-   docker build -t mommy-bot .
-   docker run -d \
-     -e BOT_TOKEN="xxx" \
-     -e OPENAI_API_KEY="xxx" \
-     -p 4300:4300 \
-     mommy-bot
-   ```
-
-## Author
-
-- Developed for CASSO COMPANY LIMITED Entry Test
-- Entry Test: Milk Tea Shop AI Chatbot System
-
-## Support
-
-For issues or questions:
-1. Check `.env` configuration
-2. Review test cases for examples
-3. Check logs for error messages
-4. Verify all dependencies are installed
 
 ---
 
-**Happy ordering! 🍵** 
+## Menu.csv — cấu trúc
 
-*Mẹ bán trà sữa - Powered by AI*
+```csv
+category,item_id,name,description,price_m,price_l,available
+Trà Sữa,TS01,Trà Sữa Trân Châu Đen,...,35000,45000,true
+```
+
+Thêm/sửa món chỉ cần chỉnh file CSV, restart bot để reload cache.
+
+---
+
+## Tích hợp thanh toán
+
+### VietQR (fallback mặc định)
+Tự động tạo URL ảnh QR chứa số TK + số tiền + nội dung CK:
+
+```
+https://img.vietqr.io/image/MB-{ACCOUNT}-vietqr_pro.jpg?amount=...&addInfo=...
+```
+
+### PayOS (tuỳ chọn, nếu có credentials)
+- Tạo link thanh toán online khi confirm đơn
+- Verify webhook chữ ký HMAC
+- Tự động mark đơn là `paid` và notify khách qua Telegram
+
+Nếu PayOS không được cấu hình hoặc bị lỗi, hệ thống tự fallback về VietQR.
+
+---
+
+## Tests
+
+```bash
+# tests/order.spec.js — mocked AI, kiểm tra toàn bộ order state machine
+npm test
+
+# tests/ai.spec.js — gọi API thật, kiểm tra AI parse
+npm run test:ai
+```
+
+Test cases bao gồm:
+
+- Basic order flow (đặt → confirm → QR)
+- Missing size → ask
+- Multi-item đơn, tính tổng chính xác
+- Invalid input, empty string, emoji spam
+- Anti-spam (xác nhận khi chưa có đơn)
+- Change order / reset
+- Thanh toán không có đơn
+- Long input (>1000 ký tự)
+- Mixed language input
+
+---
+
+## Deploy
+
+### Render / Railway / Heroku
+
+```bash
+# Set env vars trên dashboard
+npm start
+```
+
+File `render.yaml` đã cấu hình sẵn cho Render.com.
+
+### VPS Ubuntu
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs
+git clone <repo> && cd Mommy-ban-tra-sua
+npm install
+npm start
+```
+
+### Docker
+
+```bash
+docker build -t mommy-bot .
+docker run -d \
+  -e BOT_TOKEN="xxx" \
+  -e OPENAI_API_KEY="xxx" \
+  -e ACCOUNT="0999999999" \
+  -p 4300:4300 \
+  mommy-bot
+```
+
+---
+
+## Persona bot
+
+File `src/prompt/persona.txt`:
+
+> Bạn là một người mẹ bán trà sữa xinh xắn, nói chuyện dễ thương, tự nhiên, và tình cảm.  
+> Luôn gọi khách là "con", còn mình là mommy.  
+> Trả lời ngắn gọn, thân thiện, giống người thật.  
+> Không dùng ngôn ngữ máy móc.
+
+---
+
+## Lưu ý kỹ thuật
+
+- **State lưu in-memory**: restart server sẽ mất trạng thái đơn đang xử lý. Chưa tích hợp Redis/DB.
+- **uiState** (navigation state) và **orderState** tách riêng — UI state dùng để biết đang ở tầng nào của menu, không ảnh hưởng đến đơn hàng.
+- **safeEdit**: dùng `editMessageText` thay vì gửi tin nhắn mới khi điều hướng menu, tránh spam chat và giữ UX gọn.
+- **Fallback AI**: khi OpenAI không khả dụng, bot dùng fuzzy matching tên món từ menu CSV.
+- **Webhook PayOS**: cần expose port hoặc dùng tunnel (ngrok, cloudflared) khi test local.
+
+---
+
+## Tác giả
+
+Phát triển cho bài test tuyển dụng của **CASSO COMPANY LIMITED**.  
+*Mommy bán trà sữa — Powered by AI* 🍵

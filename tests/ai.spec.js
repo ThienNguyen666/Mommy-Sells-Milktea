@@ -3,7 +3,7 @@ require('dotenv').config({
 });
 
 const { parseOrder } = require('../src/services/ai.service');
-const { getMenu } = require('../src/services/menu.service');
+const { getMenu } = require('../src/utils/menu.util');
 
 describe("AI Integration Test", () => {
 

@@ -1,377 +1,294 @@
 const TelegramBot = require('node-telegram-bot-api');
-const QRCode = require('qrcode');
+
 const { handleMessage } = require('./order.service');
-const { getMenu } = require('./menu.service');
+const { getMenu } = require('../utils/menu.util');
 const { getOrder, clearOrder } = require('./order.store');
-const axios = require('axios');
+
+const { notifyPaymentSuccess, notifyPaymentCancelled, sendPaymentInfo } 
+    = require('../utils/telegram_payment.util');
+
+const {BANK_BIN_TO_CODE, BANK_NAMES, CATEGORY_CONFIG, BEST_SELLER_NAMES} 
+    = require('../utils/config.util');
+
+const {
+  homeKeyboard, itemListKeyboard, itemDetailKeyboard,
+  confirmKeyboard, paymentKeyboard, persistentKeyboard,
+  categoryKeyboard, bestSellersKeyboard,
+} 
+    = require('../utils/telegram_keyboard_builder.util');
+
+const {
+  homeText, buildCategoryText, buildItemListText,
+  buildBestSellersText, itemDetailText, cartText
+}
+  = require('../utils/telegram_text_builder.util');
+
+const { safeEdit, safeEditCaption } = require('../utils/telegram_safe_edit.util');
+const { handleTextMessage } = require('../utils/telegram_text_handler.util');
 
 let bot = null;
 
-// ========================
-// BANK BIN → TÊN NGÂN HÀNG
-// ========================
-const BANK_NAMES = {
-  '970422': 'MB Bank',
-  '970436': 'Vietcombank',
-  '970415': 'Vietinbank',
-  '970418': 'BIDV',
-  '970432': 'VPBank',
-  '970423': 'TPBank',
-  '970407': 'Techcombank',
-  '970443': 'SHB',
-  '970405': 'Agribank',
-  '970425': 'VIB',
-  '970426': 'OCB',
-  '970441': 'VietBank',
-  '970416': 'ACB',
-  '970448': 'OCB',
-  '970414': 'Oceanbank',
-  '970454': 'Viet Capital Bank',
-  '970431': 'Eximbank',
-  '970434': 'Indovina Bank',
-};
-// ========================
-// MENU FORMATTER
-// ========================
-async function buildMenuText() {
-  const menu = await getMenu();
-  const categories = {};
-  for (const item of menu) {
-    const cat = item.category || 'Khác';
-    if (!categories[cat]) categories[cat] = [];
-    categories[cat].push(item);
+// In-memory "UI state" cho mỗi user (tách riêng khỏi order state)
+const uiState = new Map(); // chatId → { screen, category, msgId, cartMsgId }
+
+function getUI(chatId) {
+  if (!uiState.has(chatId)) uiState.set(chatId, {});
+  return uiState.get(chatId);
+}
+
+async function handleCallback(callbackQuery) {
+  const chatId = String(callbackQuery.message.chat.id);
+  const msgId = callbackQuery.message.message_id;
+  const data = callbackQuery.data;
+  const ui = getUI(chatId);
+
+  await bot.answerCallbackQuery(callbackQuery.id).catch(() => {});
+
+  // ---------- NAVIGATION ----------
+  if (data === 'nav:home') {
+    ui.screen = 'home';
+    const firstName = callbackQuery.from?.first_name || 'bạn';
+    await safeEdit(bot, chatId, msgId, homeText(firstName), homeKeyboard());
+    return;
   }
 
-  const catEmoji = {
-    'Trà Sữa':      '🧋',
-    'Trà Trái Cây': '🍎',
-    'Cà Phê':       '☕',
-    'Đá Xay':       '🧊',
-    'Topping':      '✨',
-  };
+  if (data === 'nav:menu') {
+    ui.screen = 'menu';
+    const text = await buildCategoryText();
+    const kb = await categoryKeyboard();
+    await safeEdit(bot, chatId, msgId, text, kb);
+    return;
+  }
 
-  let text = '✨ *TIỆM TRÀ SỮA NHÀ MOMMY* ✨\n';
-  text += '━━━━━━━━━━━━━━━━━━━━\n';
-  text += '🌿 _Nguyên liệu tươi sạch - Đậm vị yêu thương_\n\n';
+  if (data === 'nav:back') {
+    // quay lại category cũ nếu có
+    if (ui.lastCategory) {
+      const menu = await getMenu();
+      const items = menu.filter(i => i.category === ui.lastCategory);
+      const page = ui.lastPage || 0;
+      const text = await buildItemListText(ui.lastCategory, items, page);
+      await safeEdit(bot, chatId, msgId, text, itemListKeyboard(items, ui.lastCategory, page));
+    } else {
+      const text = await buildCategoryText();
+      const kb = await categoryKeyboard();
+      await safeEdit(bot, chatId, msgId, text, kb);
+    }
+    return;
+  }
 
-  for (const [cat, items] of Object.entries(categories)) {
-    const emoji = catEmoji[cat] || '🍹';
-    text += `${emoji} *${cat.toUpperCase()}*\n`;
-    text += '──────────────────\n';
-    
-    for (const item of items) {
-      // Viết hoa chữ cái đầu cho đẹp
-      const name = item.name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-      const priceM = item.priceM.toLocaleString('vi-VN');
-      const priceL = item.priceL.toLocaleString('vi-VN');
+  // ---------- HOME ----------
+  if (data === 'home:menu') {
+    ui.screen = 'menu';
+    const text = await buildCategoryText();
+    const kb = await categoryKeyboard();
+    await safeEdit(bot, chatId, msgId, text, kb);
+    return;
+  }
 
-      if (cat === 'Topping') {
-        text += `🔹 *${name}* ➜ \`${priceM}đ\`\n`;
-      } else if (item.priceM === item.priceL) {
-        text += `🔸 *${name}* ➜ \`${priceM}đ\`\n`;
-      } else {
-        text += `🔸 *${name}*\n`;
-        text += `   ╰ _Size M:_ \`${priceM}đ\`  |  _Size L:_ \`${priceL}đ\`\n`;
+  if (data === 'home:best') {
+    ui.screen = 'best';
+    const menu = await getMenu();
+    const text = await buildBestSellersText(BEST_SELLER_NAMES);
+    await safeEdit(bot, chatId, msgId, text, bestSellersKeyboard(menu, BEST_SELLER_NAMES));
+    return;
+  }
+
+  if (data === 'home:cart') {
+    const order = getOrder(chatId);
+    const text = cartText(order);
+    const kb = order && order.items?.length > 0 ? confirmKeyboard() : {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📋 Xem menu', callback_data: 'nav:menu' }],
+          [{ text: '🏠 Home', callback_data: 'nav:home' }],
+        ],
+      },
+    };
+    await safeEdit(bot, chatId, msgId, text, kb);
+    return;
+  }
+
+  if (data === 'home:quick') {
+    await safeEdit(bot, chatId, msgId,
+      `⚡ *ĐẶT NHANH*\n━━━━━━━━━━━━━━━━━━━━\n` +
+      `Con chỉ cần nhắn trực tiếp vào chat, ví dụ:\n\n` +
+      `_"2 trà sữa trân châu đen L, 1 cà phê sữa M"_\n\n` +
+      `Mommy sẽ tự hiểu và tạo đơn cho con ngay! 😘`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '⭐ Best sellers', callback_data: 'home:best' }],
+            [{ text: '🏠 Home', callback_data: 'nav:home' }],
+          ],
+        },
       }
+    );
+    return;
+  }
+
+  // ---------- CATEGORY ----------
+  if (data.startsWith('cat:')) {
+    const catName = data.slice(4);
+
+    if (catName === 'best') {
+      const menu = await getMenu();
+      const text = await buildBestSellersText(BEST_SELLER_NAMES);
+      await safeEdit(bot, chatId, msgId, text, bestSellersKeyboard(menu, BEST_SELLER_NAMES));
+      return;
     }
-    text += '\n';
+
+    const menu = await getMenu();
+    const items = menu.filter(i => i.category === catName);
+    ui.lastCategory = catName;
+    ui.lastPage = 0;
+    const text = await buildItemListText(catName, items, 0);
+    await safeEdit(bot, chatId, msgId, text, itemListKeyboard(items, catName, 0));
+    return;
   }
 
-  text += '━━━━━━━━━━━━━━━━━━━━\n';
-  text += '💡 *CÁCH ĐẶT MÓN NHANH:*\n';
-  text += '👉 _"2 Trà sữa trân châu đen L, 1 Cà phê sữa M"_\n';
-  text += '👉 _"Cho con 1 trà dâu L thêm trân châu trắng"_\n';
-  
-  return text;
-}
+  // ---------- PAGINATION ----------
+  if (data.startsWith('page:')) {
+    const [, catName, pageStr] = data.split(':');
+    const page = parseInt(pageStr, 10);
+    const menu = await getMenu();
+    const items = menu.filter(i => i.category === catName);
+    ui.lastCategory = catName;
+    ui.lastPage = page;
+    const text = await buildItemListText(catName, items, page);
+    await safeEdit(bot, chatId, msgId, text, itemListKeyboard(items, catName, page));
+    return;
+  }
 
-// ========================
-// KEYBOARD LAYOUTS
-// ========================
-function mainMenuKeyboard() {
-  return {
-    reply_markup: {
-      keyboard: [
-        [{ text: '📜 Thực đơn hôm nay' }, { text: '🥤 Bắt đầu đặt món' }],
-        [{ text: '✨ Hướng dẫn' }, { text: '🔄 Làm mới đơn' }],
-      ],
-      resize_keyboard: true,
-      one_time_keyboard: false,
-    },
-  };
-}
+  // ---------- ITEM DETAIL ----------
+  if (data.startsWith('item:')) {
+    const itemName = data.slice(5);
+    const menu = await getMenu();
+    const item = menu.find(i => i.name === itemName);
+    if (!item) return;
+    ui.lastItem = itemName;
+    const text = itemDetailText(item);
+    await safeEdit(bot, chatId, msgId, text, itemDetailKeyboard(itemName));
+    return;
+  }
 
-function sizeKeyboard() {
-  return {
-    reply_markup: {
-      keyboard: [
-        [{ text: 'Size M' }, { text: 'Size L' }],
-        [{ text: 'Size M hết' }, { text: 'Size L hết' }],
-        [{ text: '🔄 Đặt lại từ đầu' }],
-      ],
-      resize_keyboard: true,
-      one_time_keyboard: true,
-    },
-  };
-}
+  // ---------- SIZE SELECTION ----------
+  if (data.startsWith('size:')) {
+    const [, size, ...nameParts] = data.split(':');
+    const itemName = nameParts.join(':');
 
-function confirmKeyboard() {
-  return {
-    reply_markup: {
-      keyboard: [
-        [{ text: '✅ Xác nhận đơn' }, { text: '✏️ Đổi món' }],
-        [{ text: '🔄 Đặt lại từ đầu' }],
-      ],
-      resize_keyboard: true,
-      one_time_keyboard: true,
-    },
-  };
-}
+    // Gửi tới handleMessage như gõ trực tiếp: "1 <item> size <L/M>"
+    const fakeMsg = `1 ${itemName} size ${size}`;
+    const reply = await handleMessage(chatId, fakeMsg);
 
-function paymentKeyboard() {
-  return {
-    reply_markup: {
-      keyboard: [
-        [{ text: '💳 Thanh toán' }],
-        [{ text: '📋 Xem menu' }, { text: '🛒 Đặt món mới' }],
-      ],
-      resize_keyboard: true,
-      one_time_keyboard: false,
-    },
-  };
-}
+    if (!reply) return;
 
-function afterPaymentKeyboard() {
-  return {
-    reply_markup: {
-      keyboard: [
-        [{ text: '📋 Xem menu' }, { text: '🛒 Đặt món mới' }],
-      ],
-      resize_keyboard: true,
-    },
-  };
-}
-
-// ========================
-// NORMALIZE BUTTON TEXT
-// ========================
-function normalizeInput(text) {
-  const map = {
-    '📜 thực đơn hôm nay': 'xem menu',
-    '🥤 bắt đầu đặt món': 'đặt món',
-    '🛒 đặt món mới':    'đặt lại',
-    '✨ hướng dẫn':   'hướng dẫn',
-    '🔄 làm mới đơn':    'đặt lại',
-    '✅ xác nhận đơn':   'ok',
-    '✏️ đổi món':        'đổi',
-    '💳 thanh toán':     'thanh toán',
-    '🔄 đặt lại từ đầu': 'đặt lại',
-    'size m':            'm',
-    'size l':            'l',
-    'size m hết':        'm hết',
-    'size l hết':        'l hết',
-  };
-  return map[text.toLowerCase().trim()] ?? text;
-}
-
-function keyboardForState(chatId) {
-  const order = getOrder(chatId);
-  if (!order) return mainMenuKeyboard();
-  if (order.status === 'ask_size_detail') return sizeKeyboard();
-  if (order.status === 'pending') return confirmKeyboard();
-  if (order.status === 'confirmed') return paymentKeyboard();
-  return mainMenuKeyboard();
-}
-
-// ========================
-// SEND PAYMENT INFO
-// Fallback: VietQR URL nếu generate fail
-// ========================
-
-async function sendPaymentInfo(chatId, paymentData, orderItems, total, orderId) {
-  const {
-    accountNumber,
-    accountName,
-    bin,
-    amount,
-    description,
-    checkoutUrl,
-  } = paymentData;
-
-  // 1. Lấy thông tin ngân hàng
-  const bankName = BANK_NAMES[String(bin)] || `Bank (${bin})`;
-  const bankCode = BANK_BIN_TO_CODE[String(bin)] || 'OCB';
-
-  // 2. Tạo link ảnh VietQR Pro (Ưu điểm: Đẹp, chuyên nghiệp, có logo)
-  const vietQRUrl = `https://img.vietqr.io/image/${bankCode}-${accountNumber}-vietqr_pro.jpg` +
-    `?amount=${amount}&addInfo=${encodeURIComponent(description)}&accountName=${encodeURIComponent(accountName)}`;
-
-  // 3. Format danh sách món ăn
-  const itemsText = orderItems
-    .map(i => `  • ${i.name} (${i.size}) x${i.quantity}`)
-    .join('\n');
-
-  // 4. Tạo Caption đầy đủ thông tin (Kết hợp cả 2 hàm)
-  const caption =
-    `💖 *ĐƠN HÀNG DH${orderId}*\n` +
-    `━━━━━━━━━━━━━━━━━━\n` +
-    `${itemsText}\n` +
-    `━━━━━━━━━━━━━━━━━━\n` +
-    `🏦 *Ngân hàng:* ${bankName}\n` +
-    `👤 *Chủ TK:* ${accountName}\n` +
-    `💳 *Số TK:* \`${accountNumber}\`\n` +
-    `💰 *Số tiền:* \`${Number(amount).toLocaleString('vi-VN')} VND\`\n` +
-    `📝 *Nội dung CK:* \`${description}\`\n` +
-    `━━━━━━━━━━━━━━━━━━\n` +
-    `👆 Quét mã QR hoặc CK theo thông tin trên\n` +
-    `🚀 *Thanh toán tự động:* Con chỉ cần quét mã QR, hệ thống sẽ tự động xác nhận và thông báo cho con ngay khi nhận được tiền. KHÔNG cần gửi ảnh chụp màn hình đâu nè! 💖`;
-
-  // 5. Tạo Inline Keyboard (Nút bấm xịn)
-  const inlineKeyboard = {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: '💳 Thanh toán Online (PayOS)', url: checkoutUrl }],
-        [{ text: '❌ Hủy đơn hàng', callback_data: `cancel_${orderId}` }]
-      ]
+    if (typeof reply === 'object' && reply.__type === 'PAYMENT') {
+      await bot.deleteMessage(chatId, msgId).catch(() => {});
+      await sendPaymentInfo(chatId, reply.paymentData, reply.items, reply.total, reply.orderId, bot);
+      return;
     }
-  };
 
-  try {
-    // Ưu tiên gửi ảnh QR Pro trước
-    await bot.sendPhoto(chatId, vietQRUrl, {
-      caption,
-      parse_mode: 'Markdown',
-      ...inlineKeyboard
-    });
-  } catch (err) {
-    console.error('Lỗi gửi QR Pro, đang thử fallback text:', err.message);
-    // Nếu link ảnh die, gửi text kèm nút bấm để khách vẫn thanh toán được
-    await bot.sendMessage(chatId, caption, {
-      parse_mode: 'Markdown',
-      ...inlineKeyboard
-    });
-  }
-}
+    const order = getOrder(chatId);
+    const status = order?.status;
 
-// Map BIN → VietQR bank short code
-const BANK_BIN_TO_CODE = {
-  '970422': 'MB',
-  '970436': 'VCB',
-  '970415': 'ICB',
-  '970418': 'BIDV',
-  '970432': 'VPB',
-  '970423': 'TPB',
-  '970407': 'TCB',
-  '970443': 'SHB',
-  '970405': 'VBA',
-  '970425': 'VIB',
-  '970426': 'OCB',
-  '970448': 'OCB',
-  '970416': 'ACB',
-  '970431': 'EIB',
-};
-
-// ========================
-// NOTIFY TELEGRAM KHI PAYOS WEBHOOK
-// ========================
-async function notifyPaymentSuccess(chatId, orderData) {
-  if (!bot) return;
-  try {
-    const { orderCode, amount } = orderData;
-    const msg =
-      `✅ *Mommy nhận được tiền rồi!*\n\n` +
-      `🎉 Đơn hàng *DH${orderCode}* đã thanh toán thành công!\n` +
-      `💰 Số tiền: *${Number(amount).toLocaleString('vi-VN')} VND*\n\n` +
-      `Mommy đang làm đồ uống cho con ngay nha! Chờ mommy xíu thôi 🧋💖`;
-    await bot.sendMessage(String(chatId), msg, {
-      parse_mode: 'Markdown',
-      ...afterPaymentKeyboard(),
-    });
-  } catch (err) {
-    console.error('Lỗi notify payment success:', err.message);
-  }
-}
-
-async function notifyPaymentCancelled(chatId, orderData) {
-  if (!bot) return;
-  try {
-    const { orderCode } = orderData;
-    const msg =
-      `❌ *Đơn hàng DH${orderCode} đã bị hủy thanh toán*\n\n` +
-      `Con muốn đặt lại thì nhắn mommy nha! 😊`;
-    await bot.sendMessage(String(chatId), msg, {
-      parse_mode: 'Markdown',
-      ...mainMenuKeyboard(),
-    });
-  } catch (err) {
-    console.error('Lỗi notify payment cancelled:', err.message);
-  }
-}
-
-// ========================
-// SPECIAL UI COMMANDS
-// ========================
-async function handleSpecial(chatId, normalized) {
-  if (normalized === 'xem menu') {
-    const menuText = await buildMenuText();
-    // Thêm một icon chào mừng ở đầu menu
-    await bot.sendMessage(chatId, menuText, { 
-      parse_mode: 'Markdown', 
-      ...mainMenuKeyboard() 
-    });
-    return true;
+    if (status === 'ask_size_detail') {
+      await safeEdit(bot, chatId, msgId, reply, {
+        reply_markup: itemDetailKeyboard(ui.lastItem || itemName).reply_markup,
+      });
+    } else if (status === 'pending') {
+      // Hiện cart để xác nhận
+      const cartTxt = cartText(order) + '\n\n' + reply;
+      await safeEdit(bot, chatId, msgId, cartTxt, confirmKeyboard());
+    } else {
+      await safeEdit(bot, chatId, msgId, reply, confirmKeyboard());
+    }
+    return;
   }
 
-  if (normalized === 'hướng dẫn') {
-    const guide =
-      `✨ *TRẢI NGHIỆM ĐẶT MÓN 5 SAO TẠI NHÀ MOMMY* ✨\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `1️⃣ *CHỌN MÓN YÊU THÍCH* 🥤\n` +
-      `   _Nhắn tên món kèm số lượng và size._\n` +
-      `   VD: "Cho con 1 trà sữa khoai môn L"\n\n` +
-      `2️⃣ *XÁC NHẬN ĐƠN HÀNG* ✅\n` +
-      `   _Kiểm tra lại danh sách món và bấm xác nhận._\n\n` +
-      `3️⃣ *THANH TOÁN "TING TING"* 💳\n` +
-      `   _Quét mã QR PayOS siêu tốc. Hệ thống sẽ tự động xác nhận sau 3 giây!_\n\n` +
-      `4️⃣ *THƯỞNG THỨC* 🎉\n` +
-      `   _Mommy sẽ làm máy và giao đến tận tay con ngay._\n\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n` +
-      `💎 _Mọi yêu cầu đặc biệt con cứ nhắn trực tiếp tại đây nhé!_`;
-      
-    await bot.sendMessage(chatId, guide, { 
-      parse_mode: 'Markdown', 
-      ...mainMenuKeyboard() 
-    });
-    return true;
+  // ---------- ORDER ----------
+  if (data === 'order:confirm') {
+    const reply = await handleMessage(chatId, 'ok');
+    if (!reply) return;
+
+    if (typeof reply === 'object' && reply.__type === 'PAYMENT') {
+      await bot.deleteMessage(chatId, msgId).catch(() => {});
+      await sendPaymentInfo(chatId, reply.paymentData, reply.items, reply.total, reply.orderId, bot);
+      return;
+    }
+    await safeEdit(bot, chatId, msgId, reply, paymentKeyboard(null));
+    return;
   }
 
-  if (normalized === 'đặt lại') {
+  if (data === 'order:reset') {
     clearOrder(chatId);
-    await bot.sendMessage(chatId, 
-      `🔄 *ĐÃ LÀM MỚI QUẦY ORDER*\n\n` +
-      `Mommy đã dọn dẹp đơn cũ. Mời con xem lại menu và chọn món mới nha! 🥰`, 
-      { parse_mode: 'Markdown', ...mainMenuKeyboard() }
+    await safeEdit(bot, chatId, msgId,
+      `🔄 *Đã xóa đơn cũ!*\n\nCon nhắn món mới cho mommy nhe 😊`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📋 Xem menu', callback_data: 'nav:menu' }],
+            [{ text: '🏠 Home', callback_data: 'nav:home' }],
+          ],
+        },
+      }
     );
-    return true;
+    return;
   }
 
-  if (normalized === 'đặt món') {
-    const menuText = await buildMenuText();
-    await bot.sendMessage(chatId, 
-      `🌟 *MỜI CON CHỌN MÓN* 🌟\n\n` +
-      `Hôm nay toàn món ngon thôi nè. Con nhắn tên món mommy làm cho nhe!\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n\n` + menuText, 
-      { parse_mode: 'Markdown', ...mainMenuKeyboard() }
+  // ---------- PAYMENT ----------
+  if (data === 'payment:done') {
+    clearOrder(chatId);
+    await safeEdit(bot, chatId, msgId,
+      `✅ *Mommy đã nhận được thông báo!*\n\nĐợi mommy check rồi làm đồ cho con ngay nhe 🧋💖`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🏠 Về Home', callback_data: 'nav:home' }],
+          ],
+        },
+      }
     );
-    return true;
+    return;
   }
 
-  return false;
+  if (data === 'payment:cancel' || data.startsWith('cancel_')) {
+    const orderId = data.startsWith('cancel_') ? data.replace('cancel_', '') : null;
+    clearOrder(chatId);
+    try {
+      if (orderId) {
+        const { cancelPayOSPayment } = require('./payos.service');
+        await cancelPayOSPayment(orderId);
+      }
+    } catch(err) {
+      console.error("Error canceling PayOS payment:", err.message);
+      return;
+    }
+
+    await safeEditCaption(bot, chatId, msgId,
+      `❌ *Đơn hàng đã hủy*\n\nMommy đã hủy đơn này. Khi nào thèm lại cứ nhắn mommy nhe! 🥰`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🏠 Home', callback_data: 'nav:home' }],
+          ],
+        },
+      }
+    ).catch(async () => {
+      await safeEdit(bot, chatId, msgId,
+        `❌ *Đơn hàng đã hủy*\n\nMommy đã hủy đơn này. Khi nào thèm lại cứ nhắn mommy nhe! 🥰`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🏠 Home', callback_data: 'nav:home' }],
+            ],
+          },
+        }
+      );
+    });
+    return;
+  }
 }
 
-// ========================
-// START BOT
-// ========================
 function startBot() {
   const token = process.env.BOT_TOKEN;
   if (!token) {
@@ -380,116 +297,91 @@ function startBot() {
   }
 
   bot = new TelegramBot(token, { polling: true });
-  console.log('🤖 Telegram bot đang chạy...');
+  console.log('🤖 Telegram bot đang chạy ...');
 
+  // /start
   bot.onText(/\/start/, async (msg) => {
     const chatId = String(msg.chat.id);
-    const firstName = msg.from?.first_name || 'con yêu';
+    const firstName = msg.from?.first_name || 'bạn';
     clearOrder(chatId);
-    
-    const welcome =
-      `👋 *Chào mừng ${firstName} đã ghé Tiệm Nhà Mommy!*\n\n` +
-      `🌟 Hôm nay con muốn uống gì nè? Mommy có đủ các loại trà sữa đậm vị, cà phê tỉnh táo và đá xay mát lạnh luôn.\n\n` +
-      `👇 *Con xem menu bên dưới rồi nhắn tin đặt món trực tiếp với mommy nhé!*`;
-    
-    // Gửi lời chào kèm bàn phím chính
-    await bot.sendMessage(chatId, welcome, { 
-      parse_mode: 'Markdown', 
-      ...mainMenuKeyboard() 
+
+    // Gửi home + persistent keyboard
+    await bot.sendMessage(chatId,
+      `Chào mừng ${firstName}! Mình gắn menu phím tắt bên dưới cho con nhe 👇`,
+      { reply_markup: persistentKeyboard().reply_markup }
+    );
+
+    // Gửi home inline
+    await bot.sendMessage(chatId, homeText(firstName), {
+      parse_mode: 'Markdown',
+      ...homeKeyboard(),
     });
-    
-    // Gửi menu
-    const menuText = await buildMenuText();
-    await bot.sendMessage(chatId, menuText, { parse_mode: 'Markdown' });
   });
 
+  // /menu
   bot.onText(/\/menu/, async (msg) => {
     const chatId = String(msg.chat.id);
-    const menuText = await buildMenuText();
-    await bot.sendMessage(chatId, menuText, { parse_mode: 'Markdown', ...keyboardForState(chatId) });
+    const text = await buildCategoryText();
+    const kb = await categoryKeyboard();
+    await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...kb });
   });
 
+  // /reset
   bot.onText(/\/reset/, async (msg) => {
     const chatId = String(msg.chat.id);
     clearOrder(chatId);
-    await bot.sendMessage(chatId, '🔄 Đã reset! Con nhắn món muốn đặt nha 😊', mainMenuKeyboard());
+    await bot.sendMessage(chatId,
+      `🔄 Đã reset! Nhắn món mới cho mommy nha 😊`,
+      { parse_mode: 'Markdown', ...homeKeyboard() }
+    );
   });
 
+  // /cart
+  bot.onText(/\/cart/, async (msg) => {
+    const chatId = String(msg.chat.id);
+    const order = getOrder(chatId);
+    const text = cartText(order);
+    const kb = order?.items?.length > 0 ? confirmKeyboard() : {
+      reply_markup: {
+        inline_keyboard: [[{ text: '📋 Xem menu', callback_data: 'nav:menu' }]],
+      },
+    };
+    await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...kb });
+  });
+
+  // Tin nhắn text
   bot.on('message', async (msg) => {
     if (!msg.text) return;
     if (msg.text.startsWith('/')) return;
 
     const chatId = String(msg.chat.id);
-    const rawText = msg.text.trim();
-    const normalized = normalizeInput(rawText);
+    const firstName = msg.from?.first_name || 'bạn';
 
-    console.log(`[${chatId}] "${rawText}" → "${normalized}"`);
+    console.log(`[${chatId}] "${msg.text}"`);
 
     try {
-      const handled = await handleSpecial(chatId, normalized);
-      if (handled) return;
-
-      const reply = await handleMessage(chatId, normalized);
-      if (!reply) return;
-
-      // PAYMENT object → gửi QR ảnh
-      if (typeof reply === 'object' && reply.__type === 'PAYMENT') {
-        await sendPaymentInfo(chatId, reply.paymentData, reply.items, reply.total, reply.orderId);
-        return;
-      }
-
-      // Text thường
-      await bot.sendMessage(chatId, reply, keyboardForState(chatId));
+      await handleTextMessage(chatId, msg.text.trim(), firstName, bot);
     } catch (err) {
-      console.error(`Lỗi [${chatId}]:`, err.message);
+      console.error(`Error [${chatId}]:`, err.message);
       try {
-        await bot.sendMessage(chatId, 'Mommy bị lỗi rồi con ơi, thử lại nha 😭', mainMenuKeyboard());
+        await bot.sendMessage(chatId,
+          'Mommy bị lỗi rồi con ơi, thử lại nha 😭',
+          { ...homeKeyboard() }
+        );
       } catch (_) {}
     }
   });
 
-  bot.on('callback_query', async (callbackQuery) => {
-    const chatId = String(callbackQuery.message.chat.id);
-    const action = callbackQuery.data;
-
-    if (action.startsWith('cancel_')) {
-      const orderId = action.replace('cancel_', '');
-      
-      try {
-        // 1. Gọi trực tiếp dịch vụ PayOS để hủy link trên hệ thống của họ
-        // Giả sử con đã có hàm cancelPaymentLink trong payos.service.js
-        const { cancelPayOSPayment } = require('./payos.service'); 
-        
-        // Báo cho PayOS biết là đơn này bỏ nhe
-        await cancelPayOSPayment(orderId);
-
-        // 2. Phản hồi cho Telegram là đang xử lý
-        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Đang hủy đơn trên hệ thống...' });
-
-        // 3. Cập nhật giao diện tin nhắn cũ (Xóa cái ảnh QR đi cho đỡ rối)
-        await bot.editMessageCaption(`❌ *ĐƠN HÀNG DH${orderId} ĐÃ HỦY THÀNH CÔNG*\n\n_Hệ thống PayOS đã ghi nhận hủy đơn này của con._`, {
-          chat_id: chatId,
-          message_id: callbackQuery.message.message_id,
-          parse_mode: 'Markdown'
-        });
-        
-        // 4. Xóa đơn trong bộ nhớ nội bộ (Store)
-        clearOrder(chatId);
-
-        // 5. Gửi lời nhắn an ủi từ Mommy
-        await bot.sendMessage(chatId, 
-          `Mommy đã hủy đơn *DH${orderId}* rồi nhe. Đừng buồn, khi nào thèm lại cứ nhắn mommy, mommy luôn đợi con! 🥰`, 
-          { parse_mode: 'Markdown', ...mainMenuKeyboard() }
-        );
-        
-      } catch (err) {
-        console.error('Lỗi khi hủy đơn PayOS:', err.message);
-        await bot.answerCallbackQuery(callbackQuery.id, { 
-          text: 'Hủy trên hệ thống gặp lỗi, nhưng mommy đã xóa đơn tạm cho con rồi nhé!' 
-        });
-        // Vẫn nên clearOrder để khách đặt được đơn mới
-        clearOrder(chatId);
-      }
+  // Callback queries (inline buttons)
+  bot.on('callback_query', async (cq) => {
+    try {
+      await handleCallback(cq);
+    } catch (err) {
+      console.error('callback_query error:', err.message);
+      await bot.answerCallbackQuery(cq.id, {
+        text: 'Có lỗi xảy ra, thử lại nha!',
+        show_alert: false,
+      }).catch(() => {});
     }
   });
 
@@ -500,8 +392,14 @@ function startBot() {
   return bot;
 }
 
-function getBot() {
-  return bot;
+function getBot() { 
+  return bot; 
 }
 
-module.exports = { startBot, getBot, sendPaymentInfo, notifyPaymentSuccess, notifyPaymentCancelled };
+module.exports = {
+  startBot,
+  getBot,
+  sendPaymentInfo,
+  notifyPaymentSuccess,
+  notifyPaymentCancelled,
+};

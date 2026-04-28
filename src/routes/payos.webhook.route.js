@@ -1,7 +1,9 @@
 const express = require('express');
 const { markOrderPaid, getOrderByCode } = require('../services/order.store');
+const { getBot } = require('../services/telegram.service');
 
 const router = express.Router();
+const bot = getBot();
 
 router.post('/payos/webhook', async (req, res) => {
   // Trả 200 ngay lập tức
@@ -50,9 +52,9 @@ router.post('/payos/webhook', async (req, res) => {
         
         if (isSuccess) {
           // Truyền cả webhookData (có amount, orderCode) vào đây
-          await notifyPaymentSuccess(chatId, webhookData);
+          await notifyPaymentSuccess(chatId, webhookData, bot);
         } else {
-          await notifyPaymentCancelled(chatId, webhookData);
+          await notifyPaymentCancelled(chatId, webhookData, bot);
         }
       } catch (notifyErr) {
         console.error('Lỗi notify Telegram:', notifyErr.message);

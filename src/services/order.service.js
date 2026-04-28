@@ -1,5 +1,5 @@
 const { parseOrder } = require('./ai.service');
-const { getMenu } = require('./menu.service');
+const { getMenu } = require('../utils/menu.util');
 const { generateReply } = require('./chat.service');
 const { saveOrder, getOrder, clearOrder } = require('./order.store');
 
