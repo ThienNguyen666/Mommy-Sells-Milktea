@@ -8,6 +8,13 @@
 
 Hệ thống chatbot AI cho phép khách hàng đặt đồ uống tại tiệm trà sữa hoàn toàn qua Telegram. Bot hiểu tiếng Việt tự nhiên, xử lý đơn hàng, tính tiền và phát sinh QR thanh toán tự động.
 
+<p align="center">
+  <video src="videos/Demo-Mobile.mp4" controls autoplay loop muted width="300" style="border-radius: 20px; border: 5px solid #333;">
+  </video>
+  <br>
+  <em>Demo: Đặt món bằng ngôn ngữ tự nhiên trên giao diện Mobile</em>
+</p>
+
 ### Tính năng chính
 
 - **Menu 3 tầng Progressive Disclosure** — Home → Category → Item Detail, edit message tại chỗ, không spam chat
@@ -78,6 +85,13 @@ Mỗi category 1 nút, edit message tại chỗ, không tạo tin nhắn mới:
 - Tối đa 5 món/trang, phân trang bằng nút ◀ / ▶
 - Format: `Tên Món — 35k / 45k`
 - Bấm vào món → mở Item Detail với nút chọn **Size M / Size L**
+
+<p align="left">
+  <video src="videos/Demo-PC.mp4" controls autoplay loop muted width="600" style="border-radius: 8px;">
+  </video>
+</p>
+
+> **Note:** Các nút bấm thay đổi trạng thái tại chỗ, giúp cho giao diện Telegram gọn gàng hơn và không bị trôi tin nhắn.
 
 ---
 
@@ -178,6 +192,11 @@ Thêm/sửa món chỉ cần chỉnh file CSV, restart bot để reload cache.
 ---
 
 ## Tích hợp thanh toán
+
+| Luồng thanh toán tự động qua PayOS |
+| :--- |
+| <video src="videos/PayOS-Result.mp4" controls autoplay loop muted width="100%"></video> |
+| *Hệ thống tự động verify webhook và cập nhật trạng thái đơn hàng ngay khi hủy đơn hoặc thanh toán thành công.* |
 
 ### VietQR (fallback mặc định)
 Tự động tạo URL ảnh QR chứa số TK + số tiền + nội dung CK:
