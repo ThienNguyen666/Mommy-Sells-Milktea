@@ -9,7 +9,7 @@
 Hệ thống chatbot AI cho phép khách hàng đặt đồ uống tại tiệm trà sữa hoàn toàn qua Telegram. Bot hiểu tiếng Việt tự nhiên, xử lý đơn hàng, tính tiền và phát sinh QR thanh toán tự động.
 
 <p align="center">
-  <video src="videos/Demo-Mobile.mp4" controls autoplay loop muted width="300" style="border-radius: 20px; border: 5px solid #333;">
+  <video src="https://github.com/user-attachments/assets/3c46e84f-bf25-4c7f-8282-d89e5bd2ec8f" controls autoplay loop muted width="300" style="border-radius: 20px; border: 5px solid #333;">
   </video>
   <br>
   <em>Demo: Đặt món bằng ngôn ngữ tự nhiên trên giao diện Mobile</em>
@@ -86,10 +86,11 @@ Mỗi category 1 nút, edit message tại chỗ, không tạo tin nhắn mới:
 - Format: `Tên Món — 35k / 45k`
 - Bấm vào món → mở Item Detail với nút chọn **Size M / Size L**
 
-<p align="left">
-  <video src="videos/Demo-PC.mp4" controls autoplay loop muted width="600" style="border-radius: 8px;">
-  </video>
-</p>
+
+
+https://github.com/user-attachments/assets/1278d441-434c-4176-aee0-3254d2924169
+
+
 
 > **Note:** Các nút bấm thay đổi trạng thái tại chỗ, giúp cho giao diện Telegram gọn gàng hơn và không bị trôi tin nhắn.
 
@@ -195,7 +196,7 @@ Thêm/sửa món chỉ cần chỉnh file CSV, restart bot để reload cache.
 
 | Luồng thanh toán tự động qua PayOS |
 | :--- |
-| <video src="videos/PayOS-Result.mp4" controls autoplay loop muted width="100%"></video> |
+| <video src="https://github.com/user-attachments/assets/7f930cbc-4ceb-4298-9e5a-9791ce796457" controls autoplay loop muted width="100%"></video> |
 | *Hệ thống tự động verify webhook và cập nhật trạng thái đơn hàng ngay khi hủy đơn hoặc thanh toán thành công.* |
 
 ### VietQR (fallback mặc định)
