@@ -52,8 +52,7 @@ async function notifyPaymentCancelled(chatId, orderData, bot) {
  */
 async function sendPaymentInfo(chatId, paymentData, orderItems, total, orderId, bot) {
   const { accountNumber, accountName, bin, amount, description, checkoutUrl, orderCode } = paymentData;
-
-  const bankBin = String(bin || '970426');
+  const bankBin = String(bin || '970448');
   const bankName = BANK_NAMES[bankBin] || `Bank (${bankBin})`;
   const bankCode = BANK_BIN_TO_CODE[bankBin] || 'OCB';
 
