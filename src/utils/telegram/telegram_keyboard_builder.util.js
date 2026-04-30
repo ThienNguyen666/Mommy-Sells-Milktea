@@ -1,6 +1,8 @@
 const { getMenu } = require('../menu.util');
 const { CATEGORY_CONFIG } = require('../config.util');
 
+const MAX_QTY = 99;
+
 /** Tầng 1: Màn hình Home — 4 nút chính */
 function homeKeyboard() {
   return {
@@ -68,32 +70,63 @@ function itemListKeyboard(items, categoryName, page = 0) {
 
 /**
  * Item detail: chọn size + quantity
- * qty mặc định = 1, có thể tăng/giảm
+ *
+ * TÁCH THÀNH 2 HÀM:
+ * - itemDetailKeyboard(itemName, qty)  → toàn bộ keyboard (dùng lần đầu)
+ * - itemQtyOnlyKeyboard(itemName, qty) → CHỈ phần qty + size (dùng khi bấm +/-)
+ *   Cả 2 trả về cùng structure để Telegram có thể editMessageReplyMarkup
  */
+function _buildDetailRows(encodedName, qty) {
+  const atMin = qty <= 1;
+  const atMax = qty >= MAX_QTY;
+
+  return [
+    // Dòng 1: Điều chỉnh số lượng — disable nút khi ở min/max
+    [
+      {
+        text: atMin ? '✖' : '➖',
+        callback_data: atMin ? 'qty:noop' : `qty:dec:${encodedName}:${qty}`,
+      },
+      {
+        // Bấm vào con số → bật chế độ nhập số thủ công
+        text: `${qty} ly`,
+        callback_data: `qty:input:${encodedName}`,
+      },
+      {
+        text: atMax ? '🔒' : '➕',
+        callback_data: atMax ? 'qty:noop' : `qty:inc:${encodedName}:${qty}`,
+      },
+    ],
+    // Dòng 2: Chọn size → thêm vào giỏ
+    [
+      { text: `🥤 Thêm Size M`, callback_data: `additem:M:${encodedName}:${qty}` },
+      { text: `🧋 Thêm Size L`, callback_data: `additem:L:${encodedName}:${qty}` },
+    ],
+    // Dòng 3: Điều hướng
+    [
+      { text: '🔙 Quay lại', callback_data: 'nav:back' },
+      { text: '🛒 Giỏ hàng', callback_data: 'home:cart' },
+    ],
+  ];
+}
+
+/** Full keyboard cho item detail (text + keyboard) */
 function itemDetailKeyboard(itemName, qty = 1) {
-  // Encode tên món để tránh conflict với dấu ':'
   const encodedName = encodeItemName(itemName);
   return {
     reply_markup: {
-      inline_keyboard: [
-        // Dòng 1: Điều chỉnh số lượng
-        [
-          { text: '➖', callback_data: `qty:dec:${encodedName}:${qty}` },
-          { text: `${qty} cái`, callback_data: `qty:noop` },
-          { text: '➕', callback_data: `qty:inc:${encodedName}:${qty}` },
-        ],
-        // Dòng 2: Chọn size → thêm vào giỏ
-        [
-          { text: `🥤 Thêm Size M`, callback_data: `additem:M:${encodedName}:${qty}` },
-          { text: `🧋 Thêm Size L`, callback_data: `additem:L:${encodedName}:${qty}` },
-        ],
-        // Dòng 3: Điều hướng
-        [
-          { text: '🔙 Quay lại', callback_data: 'nav:back' },
-          { text: '🛒 Giỏ hàng', callback_data: 'home:cart' },
-        ],
-      ],
+      inline_keyboard: _buildDetailRows(encodedName, qty),
     },
+  };
+}
+
+/**
+ * CHỈ inline_keyboard rows — dùng với editMessageReplyMarkup
+ * Không cần rebuild text → nhanh hơn đáng kể
+ */
+function itemQtyInlineKeyboard(encodedName, qty) {
+  return {
+    inline_keyboard: _buildDetailRows(encodedName, qty),
   };
 }
 
@@ -117,14 +150,12 @@ function confirmKeyboard() {
 
 /**
  * Payment keyboard — CHỈ có PayOS link + Hủy đơn
- * Bỏ nút "Đã chuyển khoản" vì webhook tự động xác nhận
  */
 function paymentKeyboard(checkoutUrl, orderCode) {
   const rows = [];
   if (checkoutUrl) {
     rows.push([{ text: '💳 Thanh toán qua PayOS', url: checkoutUrl }]);
   }
-  // Nút hủy đơn — truyền kèm orderCode để có thể gọi cancel API
   const cancelData = orderCode ? `payment:cancel:${orderCode}` : 'payment:cancel';
   rows.push([{ text: '❌ Hủy đơn', callback_data: cancelData }]);
   rows.push([{ text: '🏠 Home', callback_data: 'nav:home' }]);
@@ -166,7 +197,6 @@ function bestSellersKeyboard(menu, bestSellersNames = []) {
  * Telegram giới hạn callback_data <= 64 bytes
  */
 function encodeItemName(name) {
-  // Thay dấu cách bằng underscore, bỏ ký tự đặc biệt
   return name.replace(/:/g, '__COLON__').replace(/\s+/g, '_');
 }
 
@@ -175,9 +205,11 @@ function decodeItemName(encoded) {
 }
 
 module.exports = {
+  MAX_QTY,
   homeKeyboard,
   itemListKeyboard,
   itemDetailKeyboard,
+  itemQtyInlineKeyboard,   // ← mới: chỉ keyboard, không text
   confirmKeyboard,
   paymentKeyboard,
   persistentKeyboard,
