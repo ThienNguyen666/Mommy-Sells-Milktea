@@ -2,18 +2,17 @@
 
 > Bot Telegram AI cho tiệm trà sữa: đặt món bằng ngôn ngữ tự nhiên, menu 3 tầng progressive disclosure, thanh toán VietQR + PayOS tự động.
 
+<p align="center">
+  <img src="assets/hero.gif" width="300" alt="Demo mobile: menu navigation + AI parse order" />
+  <br/>
+  <em>Demo trên thiết bị di động — menu 3 tầng + AI tự hiểu đơn hàng</em>
+</p>
+
 ---
 
 ## Tổng quan dự án
 
 Hệ thống chatbot AI cho phép khách hàng đặt đồ uống tại tiệm trà sữa hoàn toàn qua Telegram. Bot hiểu tiếng Việt tự nhiên, xử lý đơn hàng, tính tiền và phát sinh QR thanh toán tự động.
-
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/3c46e84f-bf25-4c7f-8282-d89e5bd2ec8f" controls autoplay loop muted width="300" style="border-radius: 20px; border: 5px solid #333;">
-  </video>
-  <br>
-  <em>Demo: Đặt món bằng ngôn ngữ tự nhiên trên giao diện Mobile</em>
-</p>
 
 ### Tính năng chính
 
@@ -42,14 +41,14 @@ src/
 ├── routes/
 │   └── payos.webhook.route.js      # POST /payos/webhook — xác nhận thanh toán
 ├── utils/
-|   ├── telegram/                   # Các file phụ trợ telegram
-|       ├── telegram_keyboard_builder.util.js
-|       ├── telegram_text_builder.util.js
-|       ├── telegram_text_handler.util.js
-|       ├── telegram_payment.util.js
-|       ├── telegram_safe_edit.util.js
+│   ├── telegram/                   # Các file phụ trợ telegram
+│   │   ├── telegram_keyboard_builder.util.js
+│   │   ├── telegram_text_builder.util.js
+│   │   ├── telegram_text_handler.util.js
+│   │   ├── telegram_payment.util.js
+│   │   └── telegram_safe_edit.util.js
 │   ├── csv.util.js                 # Đọc CSV → JSON
-|   |── menu.util.js                # Load + cache menu từ CSV
+│   ├── menu.util.js                # Load + cache menu từ CSV
 │   ├── prompt.util.js              # Load persona.txt
 │   └── save_orders.util.js         # Ghi đơn ra file JSON (optional logging)
 ├── prompt/
@@ -61,9 +60,16 @@ src/
 
 ## Menu Progressive Disclosure — 3 tầng
 
-### Tầng 1: Home
-4 nút chính, cực gọn:
+**Tầng 1 → 2 → 3:** Home (4 nút) → Chọn category → Danh sách món + Item Detail với chọn size M/L.  
+Toàn bộ điều hướng dùng `editMessageText` tại chỗ — không tạo tin nhắn mới, không spam chat.
 
+<p align="center">
+  <img src="assets/menu-nav.gif" width="700" alt="Menu 3 tầng progressive disclosure trên Telegram Web" />
+  <br/>
+  <em>Menu 3 tầng trên Telegram Web — category → item list → item detail → giỏ hàng</em>
+</p>
+
+### Tầng 1: Home
 | Nút | Hành động |
 |---|---|
 | 📋 Xem menu | Mở danh mục |
@@ -72,27 +78,56 @@ src/
 | ⚡ Đặt nhanh | Hướng dẫn nhắn trực tiếp |
 
 ### Tầng 2: Danh mục
-Mỗi category 1 nút, edit message tại chỗ, không tạo tin nhắn mới:
+Mỗi category 1 nút, edit message tại chỗ: 🧋 Trà Sữa · 🍓 Trà Trái Cây · ☕ Cà Phê · 🧊 Đá Xay · ✨ Topping · ⭐ Best Sellers
 
-- 🧋 Trà Sữa  
-- 🍓 Trà Trái Cây  
-- ☕ Cà Phê  
-- 🧊 Đá Xay  
-- ✨ Topping  
-- ⭐ Best Sellers  
-
-### Tầng 3: Danh sách món
+### Tầng 3: Danh sách món + Item Detail
 - Tối đa 5 món/trang, phân trang bằng nút ◀ / ▶
-- Format: `Tên Món — 35k / 45k`
-- Bấm vào món → mở Item Detail với nút chọn **Size M / Size L**
+- Bấm vào món → mở Item Detail với nút **Size M / Size L** + điều chỉnh số lượng ➕ ➖
 
+---
 
+## AI Parse đơn hàng tự nhiên
 
-https://github.com/user-attachments/assets/1278d441-434c-4176-aee0-3254d2924169
+Khách không cần dùng menu — nhắn thẳng bất kỳ cú pháp nào, bot tự hiểu:
 
+```
+"2 trà sữa trân châu đen L, 1 cà phê sữa M"
+"cho mình 3 ly taro size nhỏ với 2 đá matcha lớn"
+"2 ly Trà Sữa Trân Châu Đen size L ... 3 ly Trà Xoài size M"   ← đơn 10+ món
+```
 
+<p align="center">
+  <img src="assets/ai-parse.gif" width="700" alt="AI parse đơn hàng text tự nhiên — 783.000đ" />
+  <br/>
+  <em>AI parse đơn 10 món nhiều size trong một tin nhắn — tổng 783.000đ chính xác tuyệt đối</em>
+</p>
 
-> **Note:** Các nút bấm thay đổi trạng thái tại chỗ, giúp cho giao diện Telegram gọn gàng hơn và không bị trôi tin nhắn.
+**Fallback thông minh:** khi OpenAI không khả dụng, bot tự động chuyển sang fuzzy matching tên món từ Menu.csv — không bao giờ crash.
+
+---
+
+## Thanh toán tự động
+
+<p align="center">
+  <img src="assets/payment.gif" width="700" alt="VietQR tự động → PayOS webhook xác nhận thanh toán" />
+  <br/>
+  <em>Bot gửi VietQR tự động → khách quét → webhook xác nhận → trạng thái "Đã thanh toán" ngay lập tức</em>
+</p>
+
+### VietQR (mặc định)
+Tự động tạo URL ảnh QR chứa số TK + số tiền + nội dung CK:
+```
+https://img.vietqr.io/image/MB-{ACCOUNT}-vietqr_pro.jpg?amount=...&addInfo=...
+```
+
+### PayOS (tuỳ chọn)
+Khi có credentials: tạo link thanh toán online, verify webhook chữ ký HMAC, tự động mark đơn `paid` và notify khách qua Telegram.
+
+<p align="center">
+  <img src="assets/payos-dashboard.gif" width="700" alt="PayOS dashboard — lịch sử giao dịch và chi tiết đơn hàng" />
+  <br/>
+  <em>PayOS dashboard — toàn bộ giao dịch được sync real-time, chi tiết từng món</em>
+</p>
 
 ---
 
@@ -189,29 +224,6 @@ Trà Sữa,TS01,Trà Sữa Trân Châu Đen,...,35000,45000,true
 ```
 
 Thêm/sửa món chỉ cần chỉnh file CSV, restart bot để reload cache.
-
----
-
-## Tích hợp thanh toán
-
-| Luồng thanh toán tự động qua PayOS |
-| :--- |
-| <video src="https://github.com/user-attachments/assets/7f930cbc-4ceb-4298-9e5a-9791ce796457" controls autoplay loop muted width="100%"></video> |
-| *Hệ thống tự động verify webhook và cập nhật trạng thái đơn hàng ngay khi hủy đơn hoặc thanh toán thành công.* |
-
-### VietQR (fallback mặc định)
-Tự động tạo URL ảnh QR chứa số TK + số tiền + nội dung CK:
-
-```
-https://img.vietqr.io/image/MB-{ACCOUNT}-vietqr_pro.jpg?amount=...&addInfo=...
-```
-
-### PayOS (tuỳ chọn, nếu có credentials)
-- Tạo link thanh toán online khi confirm đơn
-- Verify webhook chữ ký HMAC
-- Tự động mark đơn là `paid` và notify khách qua Telegram
-
-Nếu PayOS không được cấu hình hoặc bị lỗi, hệ thống tự fallback về VietQR.
 
 ---
 
