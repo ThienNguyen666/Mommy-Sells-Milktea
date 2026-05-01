@@ -38,43 +38,16 @@ function getUI(chatId) {
   return uiState.get(chatId);
 }
 
-// ==========================================
-// CALLBACK HANDLER
-// ==========================================
-async function handleCallback(callbackQuery) {
-  const chatId = String(callbackQuery.message.chat.id);
-  const msgId = callbackQuery.message.message_id;
-  const data = callbackQuery.data;
-  const ui = getUI(chatId);
-  const msg = callbackQuery.message;
+const qtyDebounceMap = new Map();
+const DEBOUNCE_MS = 80;
 
-  // ── answerCallbackQuery ngay lập tức — quan trọng để Telegram tắt loading ──
-  // Không await để không block xử lý tiếp
-  bot.answerCallbackQuery(callbackQuery.id).catch(() => {});
+function scheduleQtyUpdate(chatId, msgId, encodedName, newQty) {
+  const key = `${chatId}:${msgId}`;
+  const existing = qtyDebounceMap.get(key);
+  if (existing) clearTimeout(existing.timer);
 
-  // ---- noop ----
-  if (data === 'qty:noop') return;
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // QUANTITY ADJUST — TỐI ƯU: chỉ editMessageReplyMarkup, KHÔNG edit text
-  // Giảm payload ~70%, tốc độ phản hồi tăng rõ rệt
-  // ────────────────────────────────────────────────────────────────────────────
-  if (data.startsWith('qty:inc:') || data.startsWith('qty:dec:')) {
-    const parts = data.split(':');
-    const action = parts[1];           // inc | dec
-    const encodedName = parts[2];
-    const currentQty = parseInt(parts[3], 10) || 1;
-
-    const newQty = action === 'inc'
-      ? Math.min(currentQty + 1, MAX_QTY)
-      : Math.max(1, currentQty - 1);
-
-    // Không thay đổi → bỏ qua (người dùng bấm quá nhanh khi đang ở min/max)
-    if (newQty === currentQty) return;
-
-    ui.lastQty = newQty;
-
-    // CHỈ update keyboard — KHÔNG gọi getMenu(), KHÔNG rebuild text
+  const timer = setTimeout(async () => {
+    qtyDebounceMap.delete(key);
     try {
       await bot.editMessageReplyMarkup(
         itemQtyInlineKeyboard(encodedName, newQty),
@@ -85,34 +58,90 @@ async function handleCallback(callbackQuery) {
         console.error('qty editMarkup error:', e.message);
       }
     }
+  }, DEBOUNCE_MS);
+
+  qtyDebounceMap.set(key, { timer, pendingQty: newQty });
+}
+
+function getPendingQty(chatId, msgId, fallbackQty) {
+  const key = `${chatId}:${msgId}`;
+  const pending = qtyDebounceMap.get(key);
+  return pending ? pending.pendingQty : fallbackQty;
+}
+
+async function handleCallback(callbackQuery) {
+  const chatId = String(callbackQuery.message.chat.id);
+  const msgId = callbackQuery.message.message_id;
+  const data = callbackQuery.data;
+  const ui = getUI(chatId);
+  const msg = callbackQuery.message;
+
+  bot.answerCallbackQuery(callbackQuery.id).catch(() => {});
+
+  // ── noop (disabled buttons) ──
+  if (data === 'qty:noop') return;
+
+  if (data.startsWith('qty:inc:') || data.startsWith('qty:dec:')) {
+    const parts = data.split(':');
+    const action = parts[1];
+    const encodedName = parts[2];
+    const qtyFromBtn = parseInt(parts[3], 10) || 1;
+
+    // Lấy qty thực tế (có thể khác qtyFromBtn nếu đang pending)
+    const currentQty = getPendingQty(chatId, msgId, qtyFromBtn);
+    const newQty = action === 'inc'
+      ? Math.min(currentQty + 1, MAX_QTY)
+      : Math.max(1, currentQty - 1);
+
+    if (newQty === currentQty) return;
+
+    ui.lastQty = newQty;
+
+    // Cập nhật pending state ngay lập tức (optimistic update)
+    const key = `${chatId}:${msgId}`;
+    const existing = qtyDebounceMap.get(key);
+    if (existing) clearTimeout(existing.timer);
+
+    const timer = setTimeout(async () => {
+      qtyDebounceMap.delete(key);
+      try {
+        await bot.editMessageReplyMarkup(
+          itemQtyInlineKeyboard(encodedName, newQty),
+          { chat_id: chatId, message_id: msgId }
+        );
+      } catch (e) {
+        if (!e.message?.includes('message is not modified')) {
+          console.error('qty editMarkup error:', e.message);
+        }
+      }
+    }, DEBOUNCE_MS);
+
+    qtyDebounceMap.set(key, { timer, pendingQty: newQty });
     return;
   }
 
-  // ---- qty:input — bấm vào con số để nhập tay ----
+  // ── qty:input — bấm vào con số để nhập tay ──
   if (data.startsWith('qty:input:')) {
     const encodedName = data.slice('qty:input:'.length);
     const itemName = decodeItemName(encodedName);
     ui.awaitingQtyInput = { encodedName, itemName, msgId };
 
-    // Chỉ alert nhẹ, không tạo tin nhắn mới để không spam chat
-    await bot.answerCallbackQuery(callbackQuery.id, {
-      text: `Nhập số lượng (1-${MAX_QTY}) rồi gửi nha con 🥰`,
-      show_alert: false,
-    }).catch(() => {});
-
-    // Gửi prompt nhập số — 1 tin nhắn nhỏ, sẽ bị xóa sau khi nhập xong
+    // answerCallbackQuery đã được gọi ở đầu rồi, KHÔNG gọi lại
+    // Chỉ gửi 1 tin nhắn nhỏ để prompt nhập số
     try {
       const promptMsg = await bot.sendMessage(
         chatId,
         `🔢 Con muốn lấy bao nhiêu ly *${itemName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}*?\nNhập số (1–${MAX_QTY}):`,
-        { parse_mode: 'Markdown' }
+        {
+          parse_mode: 'Markdown',
+          // Giữ persistent keyboard — KHÔNG truyền reply_markup để reset
+        }
       );
       ui.awaitingQtyInput.promptMsgId = promptMsg.message_id;
     } catch (_) {}
     return;
   }
-
-  // ---- NAVIGATION ----
+  // ── NAVIGATION ──
   if (data === 'nav:home') {
     ui.screen = 'home';
     ui.awaitingQtyInput = null;
@@ -146,7 +175,7 @@ async function handleCallback(callbackQuery) {
     return;
   }
 
-  // ---- HOME ----
+  // ── HOME ──
   if (data === 'home:menu') {
     ui.screen = 'menu';
     const text = await buildCategoryText();
@@ -197,7 +226,7 @@ async function handleCallback(callbackQuery) {
     return;
   }
 
-  // ---- CATEGORY ----
+  // ── CATEGORY ──
   if (data.startsWith('cat:')) {
     const catName = data.slice(4);
     if (catName === 'best') {
@@ -215,7 +244,7 @@ async function handleCallback(callbackQuery) {
     return;
   }
 
-  // ---- PAGINATION ----
+  // ── PAGINATION ──
   if (data.startsWith('page:')) {
     const parts = data.split(':');
     const catName = parts[1];
@@ -229,7 +258,7 @@ async function handleCallback(callbackQuery) {
     return;
   }
 
-  // ---- ITEM DETAIL ----
+  // ── ITEM DETAIL ──
   if (data.startsWith('item:')) {
     const itemName = data.slice(5);
     const menu = await getMenu();
@@ -243,9 +272,8 @@ async function handleCallback(callbackQuery) {
     return;
   }
 
-  // ---- ADD ITEM TO CART (từ inline keyboard) ----
+  // ── ADD ITEM TO CART ──
   if (data.startsWith('additem:')) {
-    // format: additem:<size>:<encodedName>:<qty>
     const parts = data.split(':');
     const size = parts[1];
     const qty = parseInt(parts[parts.length - 1], 10) || 1;
@@ -269,7 +297,7 @@ async function handleCallback(callbackQuery) {
     return;
   }
 
-  // ---- ORDER ----
+  // ── ORDER ──
   if (data === 'order:confirm') {
     const reply = await handleMessage(chatId, 'ok');
     if (!reply) return;
@@ -300,7 +328,7 @@ async function handleCallback(callbackQuery) {
     return;
   }
 
-  // ---- PAYMENT: HỦY ----
+  // ── PAYMENT: HỦY ──
   if (data.startsWith('payment:cancel')) {
     const parts = data.split(':');
     const orderCodeFromBtn = parts[2] || null;
@@ -323,39 +351,34 @@ async function handleCallback(callbackQuery) {
       (orderCode ? `Đơn #DH${orderCode} đã được hủy.\n` : '') +
       `Khi nào thèm lại cứ nhắn mommy nhe! 🥰`;
 
-    const homeKb = {
+    await autoSafeEdit(bot, msg, cancelText, {
       reply_markup: {
         inline_keyboard: [
           [{ text: '📋 Đặt món mới', callback_data: 'nav:menu' }],
           [{ text: '🏠 Home', callback_data: 'nav:home' }],
         ],
       },
-    };
-
-    await autoSafeEdit(bot, msg, cancelText, homeKb);
+    });
     return;
   }
 
-  // ---- PAYMENT: DONE (fallback manual) ----
+  // ── PAYMENT: DONE ──
   if (data === 'payment:done') {
     clearOrder(chatId);
-    const doneText =
+    await autoSafeEdit(bot, msg,
       `✅ *Mommy đã nhận được thông báo!*\n\n` +
       `Đợi mommy check rồi làm đồ cho con ngay nhe 🧋💖\n\n` +
-      `_Nếu hệ thống chưa xác nhận tự động, mommy sẽ liên hệ con sau nhé!_`;
-
-    await autoSafeEdit(bot, msg, doneText, {
-      reply_markup: {
-        inline_keyboard: [[{ text: '🏠 Về Home', callback_data: 'nav:home' }]],
-      },
-    });
+      `_Nếu hệ thống chưa xác nhận tự động, mommy sẽ liên hệ con sau nhé!_`,
+      {
+        reply_markup: {
+          inline_keyboard: [[{ text: '🏠 Về Home', callback_data: 'nav:home' }]],
+        },
+      }
+    );
     return;
   }
 }
 
-// ==========================================
-// START BOT
-// ==========================================
 function startBot() {
   const token = process.env.BOT_TOKEN;
   if (!token) {
@@ -372,6 +395,7 @@ function startBot() {
     const firstName = msg.from?.first_name || 'bạn';
     clearOrder(chatId);
 
+    // Gửi persistent keyboard 1 lần duy nhất khi /start
     await bot.sendMessage(chatId,
       `Chào mừng ${firstName}! Mình gắn menu phím tắt bên dưới cho con nhe 👇`,
       { reply_markup: persistentKeyboard().reply_markup }
@@ -414,7 +438,7 @@ function startBot() {
     await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...kb });
   });
 
-  // ── Text messages ─────────────────────────────────────────────────────────
+  // ── Text messages ──────────────────────────────────────────────────────────
   bot.on('message', async (msg) => {
     if (!msg.text) return;
     if (msg.text.startsWith('/')) return;
@@ -429,7 +453,7 @@ function startBot() {
       const input = msg.text.trim();
       const parsed = parseInt(input, 10);
 
-      // Xóa tin nhắn prompt + tin nhắn người dùng vừa nhập (giữ chat gọn)
+      // Dọn dẹp: xóa prompt + tin nhắn user (giữ chat gọn)
       if (promptMsgId) bot.deleteMessage(chatId, promptMsgId).catch(() => {});
       bot.deleteMessage(chatId, msg.message_id).catch(() => {});
 
@@ -437,12 +461,10 @@ function startBot() {
         ui.lastQty = parsed;
         ui.awaitingQtyInput = null;
 
-        // Update keyboard item detail với qty mới — không rebuild text
         const menu = await getMenu();
         const item = menu.find(i => i.name === itemName);
         if (item) {
           try {
-            // Update cả text + keyboard vì qty hiển thị trong text itemDetailText
             await bot.editMessageText(itemDetailText(item, parsed), {
               chat_id: chatId,
               message_id: detailMsgId,
@@ -456,16 +478,11 @@ function startBot() {
           }
         }
       } else {
-        // Input không hợp lệ → vẫn clear state, thông báo nhẹ
         ui.awaitingQtyInput = null;
-        bot.sendMessage(
-          chatId,
-          `Số lượng phải từ 1–${MAX_QTY} nha con 😊`,
-          { reply_to_message_id: undefined }
-        ).then(m => {
-          // Tự xóa thông báo lỗi sau 3 giây
-          setTimeout(() => bot.deleteMessage(chatId, m.message_id).catch(() => {}), 3000);
-        }).catch(() => {});
+        // Thông báo lỗi tự xóa sau 3 giây
+        bot.sendMessage(chatId, `Số lượng phải từ 1–${MAX_QTY} nha con 😊`)
+          .then(m => setTimeout(() => bot.deleteMessage(chatId, m.message_id).catch(() => {}), 3000))
+          .catch(() => {});
       }
       return;
     }
@@ -488,10 +505,7 @@ function startBot() {
       await handleCallback(cq);
     } catch (err) {
       console.error('callback_query error:', err.message);
-      await bot.answerCallbackQuery(cq.id, {
-        text: 'Có lỗi xảy ra, thử lại nha!',
-        show_alert: false,
-      }).catch(() => {});
+      // Không cần answerCallbackQuery lại — đã được gọi ở đầu handleCallback
     }
   });
 

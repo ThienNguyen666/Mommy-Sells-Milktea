@@ -20,20 +20,28 @@ function normalizeText(text) {
   return map[text.toLowerCase().trim()] ?? text;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// withPersistentKeyboard — bọc options để GIỮ persistent keyboard (reply keyboard)
+// Persistent keyboard chỉ biến mất khi server gửi remove_keyboard hoặc
+// one_time_keyboard=true. Để an toàn, không truyền thêm reply_markup nào
+// cạnh tranh với nó — chỉ dùng inline_keyboard (không ảnh hưởng reply keyboard).
+// Hàm này chỉ đảm bảo parse_mode luôn được set đúng.
+// ─────────────────────────────────────────────────────────────────────────────
+function msgOpts(extra = {}) {
+  return { parse_mode: 'Markdown', ...extra };
+}
+
 async function handleTextMessage(chatId, rawText, firstName, bot) {
   const normalized = normalizeText(rawText);
 
   if (normalized === 'home') {
-    await bot.sendMessage(chatId, homeText(firstName), {
-      parse_mode: 'Markdown',
-      ...homeKeyboard(),
-    });
+    await bot.sendMessage(chatId, homeText(firstName), msgOpts(homeKeyboard()));
     return;
   }
   if (normalized === 'menu') {
     const text = await buildCategoryText();
     const kb = await categoryKeyboard();
-    await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...kb });
+    await bot.sendMessage(chatId, text, msgOpts(kb));
     return;
   }
   if (normalized === 'cart') {
@@ -44,14 +52,14 @@ async function handleTextMessage(chatId, rawText, firstName, bot) {
         inline_keyboard: [[{ text: '📋 Xem menu', callback_data: 'nav:menu' }]],
       },
     };
-    await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...kb });
+    await bot.sendMessage(chatId, text, msgOpts(kb));
     return;
   }
   if (normalized === 'reset') {
     clearOrder(chatId);
     await bot.sendMessage(chatId,
       `🔄 *Đã làm mới!*\n\nCon nhắn món mới cho mommy nhe 😊`,
-      { parse_mode: 'Markdown', ...homeKeyboard() }
+      msgOpts(homeKeyboard())
     );
     return;
   }
@@ -67,6 +75,7 @@ async function handleTextMessage(chatId, rawText, firstName, bot) {
 
   const order = getOrder(chatId);
   let extraKb = {};
+
   if (order?.status === 'ask_size_detail') {
     extraKb = {
       reply_markup: {
@@ -85,8 +94,10 @@ async function handleTextMessage(chatId, rawText, firstName, bot) {
     const payCode = order.orderCode;
     extraKb = paymentKeyboard(order.paymentData?.checkoutUrl || null, payCode);
   }
+  // Không có order hoặc trạng thái khác → không thêm inline keyboard
+  // Persistent reply keyboard vẫn hiển thị bình thường
 
-  await bot.sendMessage(chatId, reply, { parse_mode: 'Markdown', ...extraKb });
+  await bot.sendMessage(chatId, reply, msgOpts(extraKb));
 }
 
 module.exports = { handleTextMessage };
