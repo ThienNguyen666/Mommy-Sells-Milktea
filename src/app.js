@@ -45,4 +45,15 @@ if (process.env.BOT_TOKEN) {
   console.warn('BOT_TOKEN not set — Telegram bot not started');
 }
 
+// Self-ping
+const axios = require('axios');
+setInterval(() => {
+  const url = `${process.env.APP_URL}/health`;
+  if (process.env.APP_URL) {
+    axios.get(url)
+      .then(() => console.log('Self-ping: Mommy is still awake! ☕'))
+      .catch(err => console.error('Self-ping error:', err.message));
+  }
+}, 10 * 60 * 1000); 
+
 module.exports = app;

@@ -26,13 +26,13 @@ function getOrderByCode(orderCode) {
   return ordersByOrderCode.get(Number(orderCode)) || null;
 }
 
-function markOrderPaid(orderCode, webhookData) {
+function markOrderPaid(orderCode, webhookData, status = 'paid') {
   const current = getOrderByCode(orderCode);
   if (!current) return null;
 
   const next = {
     ...current,
-    status: 'paid',
+    status: status,
     paidAt: new Date(),
     paymentWebhook: webhookData,
   };

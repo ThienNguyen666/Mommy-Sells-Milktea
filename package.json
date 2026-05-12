@@ -4,7 +4,7 @@
   "description": "AI-powered milk tea shop chatbot for Telegram",
   "main": "src/app.js",
   "scripts": {
-    "start": "node src/app.js",
+    "start": "nodemon src/app.js",
     "start:cli": "node src/cli.js",
     "test": "jest tests/order.spec.js --forceExit",
     "test:ai": "jest tests/ai.spec.js --forceExit",
@@ -16,11 +16,14 @@
   "type": "commonjs",
   "dependencies": {
     "@payos/node": "^2.0.5",
+    "axios": "^1.15.2",
     "csvtojson": "^2.0.14",
     "dotenv": "^16.0.0",
     "express": "^5.2.1",
     "node-telegram-bot-api": "^0.67.0",
-    "openai": "^4.0.0"
+    "nodemon": "^3.1.14",
+    "openai": "^4.0.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "jest": "^29.0.0"
